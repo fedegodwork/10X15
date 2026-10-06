@@ -6,7 +6,7 @@ import re
 st.set_page_config(page_title="Generador de Etiquetas 10x15", page_icon="🏷️", layout="centered")
 
 st.title("🏷️ Generador de Etiquetas 10x15")
-st.write("Lee los datos de tu etiqueta original y genera una nueva etiqueta estilo 10x15 cm.")
+st.write("Genera la estructura exacta de maqueta 10x15 cm alineada con el modelo estándar.")
 
 archivo_subido = st.file_uploader("Seleccionar archivo PDF", type=["pdf"])
 
@@ -39,9 +39,8 @@ if archivo_subido:
         texto_pag = pagina.get_text("text")
         lineas = [l.strip() for l in texto_pag.split("\n") if l.strip()]
 
-        # Valores por defecto
-        localidad = lineas[0] if len(lineas) > 0 else "DESTINO"
-        destinatario = lineas[1] if len(lineas) > 1 else ""
+        localidad = ""
+        destinatario = ""
         telefono = ""
         peso_bulto = ""
         direccion = ""
@@ -52,7 +51,7 @@ if archivo_subido:
         venta = ""
         envio = ""
 
-        # Parser dinámico por palabras clave
+        # Mapeo dinámico de datos
         for l in lineas:
             l_lower = l.lower()
             if "cp:" in l_lower or "cp " in l_lower:
@@ -72,74 +71,90 @@ if archivo_subido:
             elif "+" in l or l.startswith("11") or l.startswith("15"):
                 if not telefono:
                     telefono = l
-            elif "calle" in l_lower or "av" in l_lower or "boulevard" in l_lower or "piso" in l_lower or "n°" in l_lower:
+            elif any(k in l_lower for k in ["boulevard", "calle", "av", "piso", "canning", "barrio"]):
                 if not direccion:
                     direccion = l
+            elif "esteban" in l_lower or "echeverria" in l_lower or "solano" in l_lower:
+                localidad = l.upper()
 
-        if not direccion and len(lineas) > 4:
-            direccion = lineas[4]
+        # Asignaciones de respaldo si alguna variable falló en el reconocimiento
+        if not localidad and len(lineas) > 0: localidad = lineas[0].upper()
+        if not destinatario and len(lineas) > 1: destinatario = lineas[1].upper()
+        if not direccion and len(lineas) > 4: direccion = lineas[4]
 
-        # 3. Diseñar nueva página 10x15 desde cero
+        # 3. Diseñar nueva página 10x15 (Estructura Modelo Vellón)
         nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
-        m = 10  # Margen externo
+        m = 8  # Margen general
 
-        # A. QR Grande Arriba
+        # --- SECCIÓN SUPERIOR: QR a la izquierda, Logo y Localidad a la derecha ---
+        tam_qr = 135
         if qr_pix:
-            tam_qr = 155
             rect_qr = fitz.Rect(m, m, m + tam_qr, m + tam_qr)
             nueva_pag.insert_image(rect_qr, pixmap=qr_pix)
 
-        # B. Encabezado Localidad (Fuentes estándar: "helv" y "hebo")
-        rect_loc = fitz.Rect(m + 160, m + 15, ANCHO - m, m + 80)
-        nueva_pag.insert_textbox(rect_loc, localidad.upper(), fontsize=11, fontname="hebo")
+        x_der = m + tam_qr + 10
+        y_der = m + 5
 
-        y = m + 165
-        nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
+        # Logo de empresa arriba a la derecha
+        if logo_pix:
+            rect_logo = fitz.Rect(x_der, y_der, ANCHO - m, y_der + 35)
+            nueva_pag.insert_image(rect_logo, pixmap=logo_pix)
+            y_der += 42
 
-        # C. Bloque Destinatario
-        y += 12
-        nueva_pag.insert_text(fitz.Point(m, y), "Destinatario", fontsize=8, fontname="helv")
-        y += 16
+        # Localidad / Zona destacada en gigante a la derecha del QR
+        if localidad:
+            rect_loc = fitz.Rect(x_der, y_der, ANCHO - m, m + tam_qr)
+            nueva_pag.insert_textbox(rect_loc, localidad, fontsize=13, fontname="hebo")
+
+        # Línea divisora bajo el QR
+        y_cursor = m + tam_qr + 8
+        nueva_pag.draw_line(fitz.Point(m, y_cursor), fitz.Point(ANCHO - m, y_cursor), color=(0, 0, 0), width=1)
+
+        # --- SECCIÓN CENTRAL: Destinatario ---
+        y_cursor += 10
+        nueva_pag.insert_text(fitz.Point(m, y_cursor), "Destinatario", fontsize=8, fontname="helv")
+        y_cursor += 16
 
         if destinatario:
-            nueva_pag.insert_text(fitz.Point(m, y), destinatario.upper(), fontsize=10.5, fontname="hebo")
-            y += 14
+            nueva_pag.insert_text(fitz.Point(m, y_cursor), destinatario, fontsize=12, fontname="hebo")
+            y_cursor += 15
 
         if telefono:
-            nueva_pag.insert_text(fitz.Point(m, y), telefono, fontsize=8.5, fontname="helv")
-            y += 12
+            nueva_pag.insert_text(fitz.Point(m, y_cursor), telefono, fontsize=9.5, fontname="helv")
 
+        # Fecha y Peso alineados a la derecha
         if fecha:
-            nueva_pag.insert_text(fitz.Point(ANCHO - m - 60, y), fecha, fontsize=8.5, fontname="helv")
-
+            nueva_pag.insert_text(fitz.Point(ANCHO - m - 65, y_cursor - 15), fecha, fontsize=9, fontname="helv")
         if peso_bulto:
-            nueva_pag.insert_text(fitz.Point(m, y), peso_bulto, fontsize=8.5, fontname="hebo")
-            y += 14
+            nueva_pag.insert_text(fitz.Point(ANCHO - m - 65, y_cursor), peso_bulto, fontsize=9, fontname="hebo")
 
+        y_cursor += 15
+        nueva_pag.draw_line(fitz.Point(m, y_cursor), fitz.Point(ANCHO - m, y_cursor), color=(0, 0, 0), width=1)
+
+        # --- SECCIÓN INFERIOR: Rte, Venta, Envío, Dirección y Observación ---
+        y_cursor += 10
+
+        if remitente:
+            nueva_pag.insert_text(fitz.Point(m, y_cursor), f"Rte.: {remitente}", fontsize=8.5, fontname="helv")
+            y_cursor += 12
+        if venta:
+            nueva_pag.insert_text(fitz.Point(m, y_cursor), f"Venta: {venta}", fontsize=8.5, fontname="helv")
+            y_cursor += 12
+        if envio:
+            nueva_pag.insert_text(fitz.Point(m, y_cursor), f"Envio: {envio}", fontsize=8.5, fontname="helv")
+            y_cursor += 15
+
+        # Dirección destacada en negrita
         if direccion:
-            rect_dir = fitz.Rect(m, y, ANCHO - m, y + 25)
             texto_dir = f"{direccion} {cp}".strip()
-            nueva_pag.insert_textbox(rect_dir, texto_dir, fontsize=9, fontname="hebo")
-            y += 28
+            rect_dir = fitz.Rect(m, y_cursor, ANCHO - m, y_cursor + 30)
+            nueva_pag.insert_textbox(rect_dir, texto_dir, fontsize=9.5, fontname="hebo")
+            y_cursor += 32
 
-        nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
-
-        # D. Bloque Inferior
-        y += 8
-        if logo_pix:
-            ancho_l = 70
-            alto_l = 35
-            rect_l = fitz.Rect(ANCHO - m - ancho_l, ALTO - m - alto_l, ANCHO - m, ALTO - m)
-            nueva_pag.insert_image(rect_l, pixmap=logo_pix)
-
-        rect_info_final = fitz.Rect(m, y, ANCHO - m - 75, ALTO - m)
-        lineas_finales = []
-        if remitente: lineas_finales.append(f"Rte.: {remitente}")
-        if venta: lineas_finales.append(f"Venta: {venta}")
-        if envio: lineas_finales.append(f"Envio: {envio}")
-        if observacion: lineas_finales.append(observacion)
-
-        nueva_pag.insert_textbox(rect_info_final, "\n".join(lineas_finales), fontsize=8, fontname="helv")
+        # Observación al pie
+        if observacion:
+            rect_obs = fitz.Rect(m, y_cursor, ANCHO - m, ALTO - m)
+            nueva_pag.insert_textbox(rect_obs, observacion, fontsize=8, fontname="helv")
 
     # Guardar PDF resultante
     output_buffer = io.BytesIO()
@@ -147,7 +162,7 @@ if archivo_subido:
     doc_destino.close()
     doc_origen.close()
 
-    st.success("¡Etiqueta rediseñada a 10x15 cm con éxito!")
+    st.success("¡Etiqueta maquetada correctamente en formato 10x15 cm!")
 
     st.download_button(
         label="📥 Descargar PDF 10x15",
