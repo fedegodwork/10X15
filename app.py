@@ -124,8 +124,8 @@ if archivo_subido:
             alto_franja = 28
             rect_franja = fitz.Rect(m, y_cursor, ANCHO - m, y_cursor + alto_franja)
             
-            # Dibujar rectángulo negro con esquinas levemente redondeadas
-            nueva_pag.draw_rect(rect_franja, color=(0, 0, 0), fill=(0, 0, 0), radius=3)
+            # Dibujar rectángulo negro sólido
+            nueva_pag.draw_rect(rect_franja, color=(0, 0, 0), fill=(0, 0, 0))
             
             # Texto centrado blanco grande
             nueva_pag.insert_textbox(
