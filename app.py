@@ -36,7 +36,7 @@ if archivo_subido:
         qr_pix = imagenes[0] if len(imagenes) > 0 else None
         logo_pix = imagenes[1] if len(imagenes) > 1 else None
 
-        # 2. LECTURA COMPLETA DE TEXTO LÍNEA POR LÍNEA
+        # 2. LECTURA Y PARSEO DE DATOS
         texto_completo = pagina.get_text("text")
         lineas = [l.strip() for l in texto_completo.split("\n") if l.strip()]
 
@@ -52,7 +52,6 @@ if archivo_subido:
         venta = ""
         envio = ""
 
-        # Mapeo explicito de metadatos
         lineas_conocidas = []
         for l in lineas:
             l_lower = l.lower()
@@ -82,19 +81,17 @@ if archivo_subido:
                     telefono = l
                     lineas_conocidas.append(l)
 
-        # Buscar Localidad (primer texto en mayúsculas sin números que coincida o esté al principio)
+        # Buscar Localidad
         for l in lineas:
             if l not in lineas_conocidas and not re.search(r'\d', l) and l.upper() not in ["GOXP", "LOGÍSTICA", "LOGISTICA", "DESTINATARIO"]:
                 localidad = l.upper()
                 lineas_conocidas.append(l)
                 break
 
-        # Todo lo que queda libre y no es marca/encabezado ES el Destinatario y la Dirección
+        # Destinatario y Dirección
         lineas_entrega = []
         for l in lineas:
-            if l in lineas_conocidas:
-                continue
-            if l.upper() in ["GOXP", "LOGÍSTICA", "LOGISTICA", "DESTINATARIO"]:
+            if l in lineas_conocidas or l.upper() in ["GOXP", "LOGÍSTICA", "LOGISTICA", "DESTINATARIO"]:
                 continue
             lineas_entrega.append(l)
 
@@ -107,30 +104,48 @@ if archivo_subido:
         nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
         m = 10  # Margen
 
-        # A. ENCABEZADO: QR (Izquierda) + Logo (Derecha)
+        # A. ENCABEZADO: QR (Izquierda)
         tam_qr = 115
         if qr_pix:
             rect_qr = fitz.Rect(m, m, m + tam_qr, m + tam_qr)
             nueva_pag.insert_image(rect_qr, pixmap=qr_pix)
 
-        x_der = m + tam_qr + 10
+        x_der = m + tam_qr + 8
         ancho_der = ANCHO - m - x_der
-        y_der = m
 
+        # LOGO ALINEADO ARRIBA A LA DERECHA
+        y_der = m
         if logo_pix:
             aspecto = logo_pix.width / logo_pix.height
-            ancho_l = ancho_der
+            ancho_l = ancho_der * 0.85
             alto_l = ancho_l / aspecto
-            if alto_l > 50:
-                alto_l = 50
+            if alto_l > 38:
+                alto_l = 38
                 ancho_l = alto_l * aspecto
-            rect_logo = fitz.Rect(x_der, y_der, x_der + ancho_l, y_der + alto_l)
+            
+            # Posición pegada a la derecha arriba
+            x_logo = ANCHO - m - ancho_l
+            rect_logo = fitz.Rect(x_logo, y_der, ANCHO - m, y_der + alto_l)
             nueva_pag.insert_image(rect_logo, pixmap=logo_pix)
-            y_der += alto_l + 8
+            y_der += alto_l + 6
 
+        # LOCALIDAD EN RECUADRO NEGRO CON LETRAS BLANCAS (ESTILO VELLÓN)
         if localidad:
-            rect_loc = fitz.Rect(x_der, y_der, ANCHO - m, m + tam_qr)
-            nueva_pag.insert_textbox(rect_loc, localidad, fontsize=11.5, fontname="hebo")
+            alto_caja = 34
+            rect_caja = fitz.Rect(x_der, m + tam_qr - alto_caja, ANCHO - m, m + tam_qr)
+            
+            # Dibuja fondo negro sólido
+            nueva_pag.draw_rect(rect_caja, color=(0, 0, 0), fill=(0, 0, 0))
+            
+            # Texto blanco centrado en negrita
+            nueva_pag.insert_textbox(
+                rect_caja, 
+                localidad, 
+                fontsize=11.5, 
+                fontname="hebo", 
+                color=(1, 1, 1), 
+                align=1
+            )
 
         # Línea divisora 1
         y = m + tam_qr + 8
@@ -157,7 +172,7 @@ if archivo_subido:
         y += 15
         nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
 
-        # C. BLOQUE INFERIOR: SEGUIMIENTO, DIRECCIÓN Y OBSERVACIONES
+        # C. BLOQUE INFERIOR
         y += 10
         if remitente:
             nueva_pag.insert_text(fitz.Point(m, y), f"Rte.: {remitente}", fontsize=8.5, fontname="helv")
@@ -169,7 +184,6 @@ if archivo_subido:
             nueva_pag.insert_text(fitz.Point(m, y), f"Envio: {envio}", fontsize=8.5, fontname="helv")
             y += 14
 
-        # DIRECCIÓN DE ENTREGA (IMPRESCINDIBLE)
         if direccion:
             texto_dir = f"{direccion} {cp}".strip()
             rect_dir = fitz.Rect(m, y, ANCHO - m, y + 32)
