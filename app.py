@@ -11,7 +11,7 @@ st.write("Lee los datos de tu etiqueta original y genera una nueva etiqueta esti
 archivo_subido = st.file_uploader("Seleccionar archivo PDF", type=["pdf"])
 
 if archivo_subido:
-    # Dimensiones 10x15 cm en puntos
+    # Dimensiones 10x15 cm en puntos (100x150 mm)
     ANCHO = 100 * 2.83465  # 283.465 pt
     ALTO = 150 * 2.83465   # 425.197 pt
 
@@ -81,22 +81,22 @@ if archivo_subido:
 
         # 3. Diseñar nueva página 10x15 desde cero
         nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
-        m = 10  # Margen
+        m = 10  # Margen externo
 
-        # A. QR
+        # A. QR Grande Arriba
         if qr_pix:
             tam_qr = 155
             rect_qr = fitz.Rect(m, m, m + tam_qr, m + tam_qr)
             nueva_pag.insert_image(rect_qr, pixmap=qr_pix)
 
-        # B. Encabezado Localidad
+        # B. Encabezado Localidad (Derecha del QR)
         rect_loc = fitz.Rect(m + 160, m + 15, ANCHO - m, m + 80)
         nueva_pag.insert_textbox(rect_loc, localidad.upper(), fontsize=11, fontname="helv-bold")
 
         y = m + 165
         nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
 
-        # C. Bloque Destinatario
+        # C. Bloque Destinatario (Centro)
         y += 12
         nueva_pag.insert_text(fitz.Point(m, y), "Destinatario", fontsize=8, fontname="helv")
         y += 16
@@ -106,4 +106,53 @@ if archivo_subido:
             y += 14
 
         if telefono:
-            nueva_pag.insert_text(fitz.Point(m, y), telefono, fontsize=8.5
+            nueva_pag.insert_text(fitz.Point(m, y), telefono, fontsize=8.5, fontname="helv")
+            y += 12
+
+        if fecha:
+            nueva_pag.insert_text(fitz.Point(ANCHO - m - 60, y), fecha, fontsize=8.5, fontname="helv")
+
+        if peso_bulto:
+            nueva_pag.insert_text(fitz.Point(m, y), peso_bulto, fontsize=8.5, fontname="helv-bold")
+            y += 14
+
+        if direccion:
+            rect_dir = fitz.Rect(m, y, ANCHO - m, y + 25)
+            texto_dir = f"{direccion} {cp}".strip()
+            nueva_pag.insert_textbox(rect_dir, texto_dir, fontsize=9, fontname="helv-bold")
+            y += 28
+
+        nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
+
+        # D. Bloque Inferior: Datos a la izquierda, Logo a la derecha
+        y += 8
+        if logo_pix:
+            ancho_l = 70
+            alto_l = 35
+            rect_l = fitz.Rect(ANCHO - m - ancho_l, ALTO - m - alto_l, ANCHO - m, ALTO - m)
+            nueva_pag.insert_image(rect_l, pixmap=logo_pix)
+
+        rect_info_final = fitz.Rect(m, y, ANCHO - m - 75, ALTO - m)
+        lineas_finales = []
+        if remitente: lineas_finales.append(f"Rte.: {remitente}")
+        if venta: lineas_finales.append(f"Venta: {venta}")
+        if envio: lineas_finales.append(f"Envio: {envio}")
+        if observacion: lineas_finales.append(observacion)
+
+        nueva_pag.insert_textbox(rect_info_final, "\n".join(lineas_finales), fontsize=8, fontname="helv")
+
+    # Guardar PDF resultante
+    output_buffer = io.BytesIO()
+    doc_destino.save(output_buffer)
+    doc_destino.close()
+    doc_origen.close()
+
+    st.success("¡Etiqueta rediseñada a 10x15 cm con éxito!")
+
+    st.download_button(
+        label="📥 Descargar PDF 10x15",
+        data=output_buffer.getvalue(),
+        file_name=f"10x15_{archivo_subido.name}",
+        mime="application/pdf",
+        type="primary"
+    )
