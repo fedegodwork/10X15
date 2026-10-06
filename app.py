@@ -10,7 +10,7 @@ st.write("Ajusta y agranda tus etiquetas para que ocupen la totalidad del format
 archivo_subido = st.file_uploader("Seleccionar archivo PDF", type=["pdf"])
 
 if archivo_subido:
-    # Ancho y alto de hoja 10x15 cm en puntos (1 mm = 2.83465 pt)
+    # Dimensiones 10x15 cm en puntos (1 mm = 2.83465 pt)
     ANCHO_DESTINO = 100 * 2.83465  # 283.465 pt
     ALTO_DESTINO = 150 * 2.83465   # 425.197 pt
 
@@ -19,34 +19,54 @@ if archivo_subido:
     doc_destino = fitz.open()
 
     for pagina in doc_origen:
-        # Detectar el área donde realmente hay contenido (ignorando los márgenes en blanco)
-        rect_contenido = pagina.get_bounding_box()
+        # Calcular el Bounding Box uniendo los rectángulos de texto e imágenes reales
+        rect_contenido = None
         
-        if not rect_contenido or rect_contenido.is_empty:
+        # Recorrer bloques de texto
+        bloques = pagina.get_text("blocks")
+        for b in bloques:
+            r = fitz.Rect(b[:4])
+            if rect_contenido is None:
+                rect_contenido = r
+            else:
+                rect_contenido |= r
+                
+        # Recorrer imágenes (como el logo o QR)
+        for img in pagina.get_images():
+            # Obtener el recuadro donde se dibuja la imagen
+            try:
+                for img_rect in pagina.get_image_rects(img[0]):
+                    if rect_contenido is None:
+                        rect_contenido = img_rect
+                    else:
+                        rect_contenido |= img_rect
+            except Exception:
+                pass
+
+        # Si no detectó nada específico, usamos el área completa
+        if rect_contenido is None or rect_contenido.is_empty:
             rect_contenido = pagina.rect
 
-        # Dejar solo un pequeño margen de seguridad de 2 mm para que la impresora no corte bordes
+        # Margen de seguridad de 2 mm para evitar que la impresora corte los bordes
         margen = 2 * 2.83465
         
-        # Crear la nueva página de 10x15 cm
         nueva_pag = doc_destino.new_page(width=ANCHO_DESTINO, height=ALTO_DESTINO)
         
-        # Área útil dentro de la nueva hoja de 10x15 (restando el margen de seguridad)
         ancho_util = ANCHO_DESTINO - (2 * margen)
         alto_util = ALTO_DESTINO - (2 * margen)
         
-        # Calcular el factor de escala para agrandar la etiqueta recortada al máximo
+        # Calcular la escala para ampliar la etiqueta
         escala = min(ancho_util / rect_contenido.width, alto_util / rect_contenido.height)
         
         ancho_final = rect_contenido.width * escala
         alto_final = rect_contenido.height * escala
         
-        # Centrar la etiqueta agrandada en la hoja 10x15
+        # Centrado en la hoja
         x0 = (ANCHO_DESTINO - ancho_final) / 2
         y0 = (ALTO_DESTINO - alto_final) / 2
         rect_dest = fitz.Rect(x0, y0, x0 + ancho_final, y0 + alto_final)
         
-        # Insertar SOLO la porción recortada y agrandada
+        # Dibujar la porción recortada y ampliada
         nueva_pag.show_pdf_page(rect_dest, doc_origen, pagina.number, clip=rect_contenido)
 
     output_buffer = io.BytesIO()
@@ -54,7 +74,7 @@ if archivo_subido:
     doc_destino.close()
     doc_origen.close()
 
-    st.success("¡Etiqueta optimizada al tamaño 10x15 cm!")
+    st.success("¡Etiqueta optimizada a 10x15 cm con éxito!")
     
     st.download_button(
         label="📥 Descargar PDF 10x15",
