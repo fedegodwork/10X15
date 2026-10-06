@@ -6,7 +6,7 @@ import re
 st.set_page_config(page_title="Generador 10x15 Pro", page_icon="🏷️", layout="centered")
 
 st.title("🏷️ Generador de Etiquetas 10x15")
-st.write("Lee dinámicamente tu etiqueta y recrea el diseño exacto en 10x15 cm.")
+st.write("Procesa la etiqueta sin perder información y recrea el formato 10x15 cm.")
 
 archivo_subido = st.file_uploader("Seleccionar archivo PDF", type=["pdf"])
 
@@ -68,4 +68,105 @@ if archivo_subido:
                 observacion = l
             elif "kg" in l_lower or "bulto" in l_lower:
                 peso_bulto = l
-            elif re.search(r'\d{1,2}/\
+            elif re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', l):
+                fecha = l
+            elif "+" in l or l.startswith("11") or l.startswith("15") or "phone" in l_lower:
+                if not telefono:
+                    telefono = l
+            elif l_lower in ["destinatario", "remitente"]:
+                continue
+            else:
+                lineas_no_clasificadas.append(l)
+
+        # Asignación inteligente de remanentes para no perder destinatario ni localidad
+        if len(lineas_no_clasificadas) > 0:
+            destinatario = lineas_no_clasificadas[0].upper()
+        if len(lineas_no_clasificadas) > 1:
+            localidad = lineas_no_clasificadas[1].upper()
+        if len(lineas_no_clasificadas) > 2:
+            direccion = " ".join(lineas_no_clasificadas[2:])
+
+        # 3. Diseñar nueva página 10x15 (Estructura Modelo Vellón)
+        nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
+        m = 10  # Margen externo
+
+        # A. QR Grande Arriba a la Izquierda
+        tam_qr = 130
+        if qr_pix:
+            rect_qr = fitz.Rect(m, m, m + tam_qr, m + tam_qr)
+            nueva_pag.insert_image(rect_qr, pixmap=qr_pix)
+
+        x_der = m + tam_qr + 10
+        y_der = m + 5
+
+        # B. Logo y Localidad a la Derecha del QR
+        if logo_pix:
+            rect_logo = fitz.Rect(x_der, y_der, ANCHO - m, y_der + 30)
+            nueva_pag.insert_image(rect_logo, pixmap=logo_pix)
+            y_der += 35
+
+        if localidad:
+            rect_loc = fitz.Rect(x_der, y_der, ANCHO - m, m + tam_qr)
+            nueva_pag.insert_textbox(rect_loc, localidad, fontsize=12, fontname="hebo")
+
+        # Línea divisora
+        y = m + tam_qr + 10
+        nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
+
+        # C. Bloque Destinatario (Centro)
+        y += 12
+        nueva_pag.insert_text(fitz.Point(m, y), "Destinatario", fontsize=8, fontname="helv")
+        y += 16
+
+        if destinatario:
+            nueva_pag.insert_text(fitz.Point(m, y), destinatario, fontsize=11, fontname="hebo")
+            y += 14
+
+        if telefono:
+            nueva_pag.insert_text(fitz.Point(m, y), telefono, fontsize=8.5, fontname="helv")
+
+        # Fecha y Bulto alineados a la derecha
+        if fecha:
+            nueva_pag.insert_text(fitz.Point(ANCHO - m - 60, y - 14), fecha, fontsize=8.5, fontname="helv")
+        if peso_bulto:
+            nueva_pag.insert_text(fitz.Point(ANCHO - m - 60, y), peso_bulto, fontsize=8.5, fontname="hebo")
+
+        y += 14
+        nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
+
+        # D. Bloque Inferior: Datos de Envío y Dirección
+        y += 12
+        if remitente:
+            nueva_pag.insert_text(fitz.Point(m, y), f"Rte.: {remitente}", fontsize=8, fontname="helv")
+            y += 11
+        if venta:
+            nueva_pag.insert_text(fitz.Point(m, y), f"Venta: {venta}", fontsize=8, fontname="helv")
+            y += 11
+        if envio:
+            nueva_pag.insert_text(fitz.Point(m, y), f"Envio: {envio}", fontsize=8, fontname="helv")
+            y += 13
+
+        if direccion:
+            texto_dir = f"{direccion} {cp}".strip()
+            rect_dir = fitz.Rect(m, y, ANCHO - m, y + 25)
+            nueva_pag.insert_textbox(rect_dir, texto_dir, fontsize=9, fontname="hebo")
+            y += 28
+
+        if observacion:
+            rect_obs = fitz.Rect(m, y, ANCHO - m, ALTO - m)
+            nueva_pag.insert_textbox(rect_obs, observacion, fontsize=8, fontname="helv")
+
+    output_buffer = io.BytesIO()
+    doc_destino.save(output_buffer)
+    doc_destino.close()
+    doc_origen.close()
+
+    st.success("¡Etiqueta reestructurada correctamente a 10x15 cm!")
+
+    st.download_button(
+        label="📥 Descargar PDF 10x15",
+        data=output_buffer.getvalue(),
+        file_name=f"10x15_{archivo_subido.name}",
+        mime="application/pdf",
+        type="primary"
+    )
