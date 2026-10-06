@@ -2,11 +2,12 @@ import streamlit as st
 import fitz  # PyMuPDF
 import io
 import re
+import base64
 
 st.set_page_config(page_title="Generador 10x15 Pro", page_icon="🏷️", layout="centered")
 
 st.title("🏷️ Generador de Etiquetas 10x15")
-st.write("Genera la maqueta con la disposición exacta de zonas y bloques.")
+st.write("Genera la maqueta con la disposición exacta de zonas y bloques lista para descargar o imprimir.")
 
 archivo_subido = st.file_uploader("Seleccionar archivo PDF", type=["pdf"])
 
@@ -100,12 +101,12 @@ if archivo_subido:
         if len(lineas_entrega) > 1:
             direccion = " ".join(lineas_entrega[1:])
 
-        # 3. DISEÑAR ETIQUETA 10x15 (DISEÑO EXACTO FOTO 2)
+        # 3. DISEÑAR ETIQUETA 10x15
         nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
         m = 10  # Margen externo
         y_cursor = m
 
-        # --- SECCIÓN 1: ENCABEZADO (LOGO A LA IZQ | BULTO A LA DER) ---
+        # ENCABEZADO: LOGO + BULTO
         if logo_pix:
             aspecto = logo_pix.width / logo_pix.height
             alto_logo = 32
@@ -119,15 +120,11 @@ if archivo_subido:
 
         y_cursor += 38
 
-        # --- SECCIÓN 2: FRANJA DE LOCALIDAD (ANCHO COMPLETO, FONDO NEGRO) ---
+        # FRANJA DE LOCALIDAD
         if localidad:
             alto_franja = 28
             rect_franja = fitz.Rect(m, y_cursor, ANCHO - m, y_cursor + alto_franja)
-            
-            # Dibujar rectángulo negro sólido
             nueva_pag.draw_rect(rect_franja, color=(0, 0, 0), fill=(0, 0, 0))
-            
-            # Texto centrado blanco grande
             nueva_pag.insert_textbox(
                 rect_franja, 
                 localidad, 
@@ -138,7 +135,7 @@ if archivo_subido:
             )
             y_cursor += alto_franja + 12
 
-        # --- SECCIÓN 3: QR (IZQUIERDA) + DATOS DE SEGUIMIENTO (DERECHA) ---
+        # QR Y DATOS DE SEGUIMIENTO
         tam_qr = 120
         if qr_pix:
             rect_qr = fitz.Rect(m, y_cursor, m + tam_qr, y_cursor + tam_qr)
@@ -168,7 +165,7 @@ if archivo_subido:
         y_cursor += tam_qr + 10
         nueva_pag.draw_line(fitz.Point(m, y_cursor), fitz.Point(ANCHO - m, y_cursor), color=(0, 0, 0), width=1)
 
-        # --- SECCIÓN 4: DESTINATARIO Y DIRECCIÓN DE ENTREGA ---
+        # DESTINATARIO Y DIRECCIÓN
         y_cursor += 12
         nueva_pag.insert_text(fitz.Point(m, y_cursor), "Destinatario", fontsize=8, fontname="helv")
         y_cursor += 16
@@ -193,15 +190,52 @@ if archivo_subido:
 
     output_buffer = io.BytesIO()
     doc_destino.save(output_buffer)
+    pdf_bytes = output_buffer.getvalue()
     doc_destino.close()
     doc_origen.close()
 
-    st.success("¡Etiqueta adaptada con éxito al formato 10x15 cm!")
+    st.success("¡Etiqueta lista!")
 
-    st.download_button(
-        label="📥 Descargar PDF 10x15",
-        data=output_buffer.getvalue(),
-        file_name=f"10x15_{archivo_subido.name}",
-        mime="application/pdf",
-        type="primary"
-    )
+    # Columnas para los dos botones
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.download_button(
+            label="📥 Descargar PDF 10x15",
+            data=pdf_bytes,
+            file_name=f"10x15_{archivo_subido.name}",
+            mime="application/pdf",
+            type="primary",
+            use_container_width=True
+        )
+
+    with col2:
+        # Codificar el PDF en base64 para inyectarlo en el frame de impresión directa
+        base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+        html_impresion = f"""
+            <a href="data:application/pdf;base64,{base64_pdf}" id="print_link" style="display:none;"></a>
+            <button onclick="imprimirPDF()" style="
+                width: 100%;
+                background-color: #28a745;
+                color: white;
+                padding: 0.5rem 1rem;
+                font-size: 1rem;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                font-weight: bold;
+                height: 45px;
+            ">🖨️ Imprimir en Térmica</button>
+            <script>
+            function imprimirPDF() {{
+                var pdfData = "data:application/pdf;base64,{base64_pdf}";
+                var iframe = document.createElement('iframe');
+                iframe.style.display = "none";
+                iframe.src = pdfData;
+                document.body.appendChild(iframe);
+                iframe.contentWindow.focus();
+                iframe.contentWindow.print();
+            }}
+            </script>
+        """
+        st.components.v1.html(html_impresion, height=55)
