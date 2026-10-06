@@ -4,7 +4,7 @@ import io
 import re
 import base64
 
-st.set_page_config(page_title="Generador 10x15 Universal", page_icon="🏷️", layout="centered")
+st.set_page_config(page_title="Generador 10x15 Universal", page_icon="🏷️️", layout="centered")
 
 st.title("🏷️ Generador de Etiquetas 10x15")
 st.write("Mapeo dinámico por coordenadas para máxima consistencia entre diferentes formatos de etiqueta.")
@@ -37,7 +37,7 @@ if archivo_subido:
         qr_pix = imagenes[0] if len(imagenes) > 0 else None
         logo_pix = imagenes[1] if len(imagenes) > 1 else None
 
-        # 2. PARSEO DE DATOS POR DICCIONARIO Y PALABRAS CLAVE
+        # 2. PARSEO DE DATOS
         texto_completo = pagina.get_text("text")
         lineas = [l.strip() for l in texto_completo.split("\n") if l.strip()]
 
@@ -53,12 +53,7 @@ if archivo_subido:
         venta = ""
         envio = ""
 
-        palabras_ignorar = [
-            "goxp", "logística", "logistica", "jyj", "j&j", 
-            "destinatario", "remitente", "campos extra", "total a cobrar"
-        ]
-
-        # A. Mapeo de metadatos mediante patrones
+        # Mapeo de metadatos mediante patrones
         for l in lineas:
             l_lower = l.lower()
             if "cp:" in l_lower or "cp " in l_lower:
@@ -82,50 +77,51 @@ if archivo_subido:
                 if not telefono:
                     telefono = l
 
-        # B. Extracción de Localidad y Destinatario por Coordenadas Espaciales (Words)
-        words = pagina.get_text("words")  # (x0, y0, x1, y1, word, block_no, line_no, word_no)
+        # Búsqueda directa de Localidad por patrones y palabras clave de zonas
+        palabras_ignorar = ["goxp", "logística", "logistica", "jyj", "j&j", "destinatario", "remitente", "campos extra", "total a cobrar", "sin información"]
 
-        # Agrupar palabras de la columna central/izquierda por líneas
-        lineas_coord = {}
-        for w in words:
-            word_txt = w[4].strip()
-            # Ignorar palabras de marcas o basuras del sistema
-            if any(ign in word_txt.lower() for ign in palabras_ignorar):
+        for l in lineas:
+            l_clean = l.strip().upper()
+            if any(ign in l.lower() for ign in palabras_ignorar):
                 continue
-            if any(k in word_txt.lower() for k in ["rte:", "venta:", "envio:", "cp:", "total"]):
+            # Detectar si coincide con una localidad/zona
+            if any(z in l_clean for z in ["MORON", "MORÓN", "SOLANO", "ESTEBAN ECHEVERRIA", "ECHEVERRIA", "QUILMES", "LANUS", "LANÚS", "AVELLANEDA", "SAN ISIDRO", "CABA", "PALERMO", "MORENO", "MERLO", "SAN MARTIN", "FLORIDA", "TIGRE", "ZONA"]):
+                localidad = l_clean
+                break
+
+        # Respaldos de Localidad si no matcheó en el diccionario
+        if not localidad:
+            for l in lineas:
+                l_clean = l.strip().upper()
+                if l_clean not in palabras_ignorar and len(l_clean) >= 3 and not re.search(r'\d', l_clean):
+                    if l_clean != destinatario:
+                        localidad = l_clean
+                        break
+
+        # Búsqueda de Destinatario (Primera línea con texto que no sea metadato ni localidad)
+        for l in lineas:
+            l_clean = l.strip()
+            if any(ign in l.lower() for ign in palabras_ignorar) or l_clean.upper() == localidad:
                 continue
+            if re.search(r'\d', l_clean) or "/" in l_clean or "CP:" in l_clean:
+                continue
+            destinatario = l_clean.upper()
+            break
 
-            y_approx = round(w[1] / 10) * 10
-            lineas_coord.setdefault(y_approx, []).append(w)
-
-        # Ordenar líneas verticalmente
-        lineas_ordenadas = []
-        for y_key in sorted(lineas_coord.keys()):
-            palabras_linea = sorted(lineas_coord[y_key], key=lambda x: x[0])
-            texto_linea = " ".join([w[4] for w in palabras_linea]).strip()
-            if texto_linea:
-                lineas_ordenadas.append(texto_linea)
-
-        # La localidad es la palabra/zona en mayúsculas sin números
-        for l in lineas_ordenadas:
-            if not re.search(r'\d', l) and len(l) >= 3 and l.isupper():
-                if not localidad:
-                    localidad = l
+        # Dirección
+        for l in lineas:
+            l_lower = l.lower()
+            if any(k in l_lower for k in ["calle", "av", "boulevard", "cobo", "pasaje", "piso", "n°", "cp:"]):
+                if "rte:" not in l_lower and "venta:" not in l_lower:
+                    direccion = l
                     break
 
-        # Filtrar líneas para Destinatario y Dirección
-        lineas_limpias = []
-        for l in lineas_ordenadas:
-            if l == localidad or any(k in l.lower() for k in ["sin información", "campos extra", "cobrar", "$"]):
-                continue
-            if re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', l) or "+" in l or l.startswith("11"):
-                continue
-            lineas_limpias.append(l)
-
-        if len(lineas_limpias) > 0:
-            destinatario = lineas_limpias[0].upper()
-        if len(lineas_limpias) > 1:
-            direccion = " ".join(lineas_limpias[1:])
+        if not direccion:
+            lineas_restantes = [l for l in lineas if l.upper() not in [destinatario, localidad] and not any(ign in l.lower() for ign in palabras_ignorar)]
+            for l in lineas_restantes:
+                if re.search(r'\d', l) and "/" not in l and "+" not in l:
+                    direccion = l
+                    break
 
         # 3. CONSTRUCCIÓN DE LA ETIQUETA 10x15
         nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
@@ -204,7 +200,7 @@ if archivo_subido:
             y_cursor += 16
 
         if direccion:
-            texto_dir = f"{direccion} {cp}".strip()
+            texto_dir = f"{direccion} {cp}".strip() if cp not in direccion else direccion
             rect_dir = fitz.Rect(m, y_cursor, ANCHO - m, y_cursor + 32)
             nueva_pag.insert_textbox(rect_dir, texto_dir, fontsize=10, fontname="hebo")
             y_cursor += 34
@@ -253,7 +249,7 @@ if archivo_subido:
             cursor: pointer;
             box-sizing: border-box;
             font-family: sans-serif;
-        ">🖨️️ Imprimir en Térmica</button>
+        ">🖨️ Imprimir en Térmica</button>
     </div>
 
     <script>
