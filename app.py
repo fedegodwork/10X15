@@ -39,7 +39,7 @@ if archivo_subido:
         texto_pag = pagina.get_text("text")
         lineas = [l.strip() for l in texto_pag.split("\n") if l.strip()]
 
-        # Valores por defecto para evitar cuelgues
+        # Valores por defecto
         localidad = lineas[0] if len(lineas) > 0 else "DESTINO"
         destinatario = lineas[1] if len(lineas) > 1 else ""
         telefono = ""
@@ -52,7 +52,7 @@ if archivo_subido:
         venta = ""
         envio = ""
 
-        # Parser por palabras clave
+        # Parser dinámico por palabras clave
         for l in lineas:
             l_lower = l.lower()
             if "cp:" in l_lower or "cp " in l_lower:
@@ -89,20 +89,20 @@ if archivo_subido:
             rect_qr = fitz.Rect(m, m, m + tam_qr, m + tam_qr)
             nueva_pag.insert_image(rect_qr, pixmap=qr_pix)
 
-        # B. Encabezado Localidad (Derecha del QR)
+        # B. Encabezado Localidad (Fuentes estándar: "helv" y "hebo")
         rect_loc = fitz.Rect(m + 160, m + 15, ANCHO - m, m + 80)
-        nueva_pag.insert_textbox(rect_loc, localidad.upper(), fontsize=11, fontname="helv-bold")
+        nueva_pag.insert_textbox(rect_loc, localidad.upper(), fontsize=11, fontname="hebo")
 
         y = m + 165
         nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
 
-        # C. Bloque Destinatario (Centro)
+        # C. Bloque Destinatario
         y += 12
         nueva_pag.insert_text(fitz.Point(m, y), "Destinatario", fontsize=8, fontname="helv")
         y += 16
 
         if destinatario:
-            nueva_pag.insert_text(fitz.Point(m, y), destinatario.upper(), fontsize=10.5, fontname="helv-bold")
+            nueva_pag.insert_text(fitz.Point(m, y), destinatario.upper(), fontsize=10.5, fontname="hebo")
             y += 14
 
         if telefono:
@@ -113,18 +113,18 @@ if archivo_subido:
             nueva_pag.insert_text(fitz.Point(ANCHO - m - 60, y), fecha, fontsize=8.5, fontname="helv")
 
         if peso_bulto:
-            nueva_pag.insert_text(fitz.Point(m, y), peso_bulto, fontsize=8.5, fontname="helv-bold")
+            nueva_pag.insert_text(fitz.Point(m, y), peso_bulto, fontsize=8.5, fontname="hebo")
             y += 14
 
         if direccion:
             rect_dir = fitz.Rect(m, y, ANCHO - m, y + 25)
             texto_dir = f"{direccion} {cp}".strip()
-            nueva_pag.insert_textbox(rect_dir, texto_dir, fontsize=9, fontname="helv-bold")
+            nueva_pag.insert_textbox(rect_dir, texto_dir, fontsize=9, fontname="hebo")
             y += 28
 
         nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
 
-        # D. Bloque Inferior: Datos a la izquierda, Logo a la derecha
+        # D. Bloque Inferior
         y += 8
         if logo_pix:
             ancho_l = 70
