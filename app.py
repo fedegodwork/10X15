@@ -4,16 +4,16 @@ import io
 import re
 import base64
 
-st.set_page_config(page_title="Generador 10x15 Pro", page_icon="🏷️", layout="centered")
+st.set_page_config(page_title="Generador 10x15 Universal", page_icon="🏷️", layout="centered")
 
 st.title("🏷️ Generador de Etiquetas 10x15")
-st.write("Genera la maqueta con la disposición exacta de zonas y bloques lista para descargar o imprimir.")
+st.write("Mapeo dinámico por coordenadas para máxima consistencia entre diferentes formatos de etiqueta.")
 
 archivo_subido = st.file_uploader("Seleccionar archivo PDF", type=["pdf"])
 
 if archivo_subido:
-    ANCHO = 100 * 2.83465  # 100 mm en puntos (283.465 pt)
-    ALTO = 150 * 2.83465   # 150 mm en puntos (425.197 pt)
+    ANCHO = 100 * 2.83465  # 100 mm (283.465 pt)
+    ALTO = 150 * 2.83465   # 150 mm (425.197 pt)
 
     bytes_pdf = archivo_subido.read()
     doc_origen = fitz.open(stream=bytes_pdf, filetype="pdf")
@@ -37,7 +37,7 @@ if archivo_subido:
         qr_pix = imagenes[0] if len(imagenes) > 0 else None
         logo_pix = imagenes[1] if len(imagenes) > 1 else None
 
-        # 2. LECTURA Y PARSEO DE DATOS
+        # 2. PARSEO DE DATOS POR DICCIONARIO Y PALABRAS CLAVE
         texto_completo = pagina.get_text("text")
         lineas = [l.strip() for l in texto_completo.split("\n") if l.strip()]
 
@@ -53,60 +53,86 @@ if archivo_subido:
         venta = ""
         envio = ""
 
-        lineas_conocidas = []
+        palabras_ignorar = [
+            "goxp", "logística", "logistica", "jyj", "j&j", 
+            "destinatario", "remitente", "campos extra", "total a cobrar"
+        ]
+
+        # A. Mapeo de metadatos mediante patrones
         for l in lineas:
             l_lower = l.lower()
             if "cp:" in l_lower or "cp " in l_lower:
-                cp = l
-                lineas_conocidas.append(l)
+                cp_match = re.search(r'CP:?\s*(\d+)', l, re.IGNORECASE)
+                cp = f"CP: {cp_match.group(1)}" if cp_match else l
             elif "rte" in l_lower:
                 remitente = re.sub(r'(?i)rte\.?:?', '', l).strip()
-                lineas_conocidas.append(l)
             elif "venta" in l_lower:
                 venta = re.sub(r'(?i)venta:?', '', l).strip()
-                lineas_conocidas.append(l)
             elif "envio" in l_lower or "envío" in l_lower:
                 envio = re.sub(r'(?i)env[ií]o:?', '', l).strip()
-                lineas_conocidas.append(l)
             elif "observaci" in l_lower or "ref:" in l_lower:
-                observacion = l
-                lineas_conocidas.append(l)
+                if not observacion or observacion.lower() == "sin información":
+                    observacion = l
             elif "kg" in l_lower or "bulto" in l_lower:
                 peso_bulto = l.upper()
-                lineas_conocidas.append(l)
-            elif "/" in l and len(l) <= 10:
-                fecha = l
-                lineas_conocidas.append(l)
-            elif "+" in l or l.startswith("11") or l.startswith("15"):
+            elif re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', l):
+                if not fecha:
+                    fecha = l
+            elif ("+" in l or l.startswith("11") or l.startswith("15")) and len(re.sub(r'\D', '', l)) >= 8:
                 if not telefono:
                     telefono = l
-                    lineas_conocidas.append(l)
 
-        # Buscar Localidad
-        for l in lineas:
-            if l not in lineas_conocidas and not re.search(r'\d', l) and l.upper() not in ["GOXP", "LOGÍSTICA", "LOGISTICA", "DESTINATARIO"]:
-                localidad = l.upper()
-                lineas_conocidas.append(l)
-                break
+        # B. Extracción de Localidad y Destinatario por Coordenadas Espaciales (Words)
+        words = pagina.get_text("words")  # (x0, y0, x1, y1, word, block_no, line_no, word_no)
 
-        # Destinatario y Dirección
-        lineas_entrega = []
-        for l in lineas:
-            if l in lineas_conocidas or l.upper() in ["GOXP", "LOGÍSTICA", "LOGISTICA", "DESTINATARIO"]:
+        # Agrupar palabras de la columna central/izquierda por líneas
+        lineas_coord = {}
+        for w in words:
+            word_txt = w[4].strip()
+            # Ignorar palabras de marcas o basuras del sistema
+            if any(ign in word_txt.lower() for ign in palabras_ignorar):
                 continue
-            lineas_entrega.append(l)
+            if any(k in word_txt.lower() for k in ["rte:", "venta:", "envio:", "cp:", "total"]):
+                continue
 
-        if len(lineas_entrega) > 0:
-            destinatario = lineas_entrega[0].upper()
-        if len(lineas_entrega) > 1:
-            direccion = " ".join(lineas_entrega[1:])
+            y_approx = round(w[1] / 10) * 10
+            lineas_coord.setdefault(y_approx, []).append(w)
 
-        # 3. DISEÑAR ETIQUETA 10x15
+        # Ordenar líneas verticalmente
+        lineas_ordenadas = []
+        for y_key in sorted(lineas_coord.keys()):
+            palabras_linea = sorted(lineas_coord[y_key], key=lambda x: x[0])
+            texto_linea = " ".join([w[4] for w in palabras_linea]).strip()
+            if texto_linea:
+                lineas_ordenadas.append(texto_linea)
+
+        # La localidad es la palabra/zona en mayúsculas sin números
+        for l in lineas_ordenadas:
+            if not re.search(r'\d', l) and len(l) >= 3 and l.isupper():
+                if not localidad:
+                    localidad = l
+                    break
+
+        # Filtrar líneas para Destinatario y Dirección
+        lineas_limpias = []
+        for l in lineas_ordenadas:
+            if l == localidad or any(k in l.lower() for k in ["sin información", "campos extra", "cobrar", "$"]):
+                continue
+            if re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', l) or "+" in l or l.startswith("11"):
+                continue
+            lineas_limpias.append(l)
+
+        if len(lineas_limpias) > 0:
+            destinatario = lineas_limpias[0].upper()
+        if len(lineas_limpias) > 1:
+            direccion = " ".join(lineas_limpias[1:])
+
+        # 3. CONSTRUCCIÓN DE LA ETIQUETA 10x15
         nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
-        m = 10  # Margen externo
+        m = 10
         y_cursor = m
 
-        # ENCABEZADO: LOGO + BULTO
+        # ENCABEZADO
         if logo_pix:
             aspecto = logo_pix.width / logo_pix.height
             alto_logo = 32
@@ -114,9 +140,8 @@ if archivo_subido:
             rect_logo = fitz.Rect(m, y_cursor, m + ancho_logo, y_cursor + alto_logo)
             nueva_pag.insert_image(rect_logo, pixmap=logo_pix)
 
-        if peso_bulto:
-            txt_bulto = peso_bulto if "BULTO" in peso_bulto else f"BULTO {peso_bulto}"
-            nueva_pag.insert_text(fitz.Point(ANCHO - m - 90, y_cursor + 20), txt_bulto, fontsize=11, fontname="hebo")
+        txt_bulto = peso_bulto if peso_bulto else "BULTO 1/1"
+        nueva_pag.insert_text(fitz.Point(ANCHO - m - 90, y_cursor + 20), txt_bulto, fontsize=11, fontname="hebo")
 
         y_cursor += 38
 
@@ -135,7 +160,7 @@ if archivo_subido:
             )
             y_cursor += alto_franja + 12
 
-        # QR Y DATOS DE SEGUIMIENTO
+        # QR Y SEGUIMIENTO
         tam_qr = 120
         if qr_pix:
             rect_qr = fitz.Rect(m, y_cursor, m + tam_qr, y_cursor + tam_qr)
@@ -196,7 +221,6 @@ if archivo_subido:
 
     st.success("¡Etiqueta lista!")
 
-    # Botones HTML alineados simétricamente
     base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
     nombre_archivo = f"10x15_{archivo_subido.name}"
 
@@ -229,7 +253,7 @@ if archivo_subido:
             cursor: pointer;
             box-sizing: border-box;
             font-family: sans-serif;
-        ">🖨️ Imprimir en Térmica</button>
+        ">🖨️️ Imprimir en Térmica</button>
     </div>
 
     <script>
