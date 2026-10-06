@@ -22,7 +22,9 @@ if archivo_subido:
     for pagina in doc_origen:
         r_pag = pagina.rect
 
-        # --- 1. EXTRAER IMÁGENES (QR Y LOGO) ---
+        # -------------------------------------------------------------
+        # 1. EXTRAER IMÁGENES (QR Y LOGO)
+        # -------------------------------------------------------------
         imagenes = []
         try:
             for img_info in pagina.get_images():
@@ -37,7 +39,9 @@ if archivo_subido:
         qr_pix = imagenes[0] if len(imagenes) > 0 else None
         logo_pix = imagenes[1] if len(imagenes) > 1 else None
 
-        # --- 2. EXTRAER Y PARSEAR TEXTO COMPLETO ---
+        # -------------------------------------------------------------
+        # 2. CAPTURA Y PARSEO ROBUSTO DE DATOS
+        # -------------------------------------------------------------
         texto_completo = pagina.get_text("text")
         lineas = [l.strip() for l in texto_completo.split("\n") if l.strip()]
 
@@ -53,93 +57,107 @@ if archivo_subido:
         venta = ""
         envio = ""
 
-        # Mapeo por expresiones clave
+        # Mapeo explicito por expresiones clave
+        lineas_descarte = []
         for l in lineas:
             l_lower = l.lower()
             if "cp:" in l_lower or "cp " in l_lower:
                 cp = l
+                lineas_descarte.append(l)
             elif "rte" in l_lower:
                 remitente = re.sub(r'(?i)rte\.?:?', '', l).strip()
+                lineas_descarte.append(l)
             elif "venta" in l_lower:
                 venta = re.sub(r'(?i)venta:?', '', l).strip()
+                lineas_descarte.append(l)
             elif "envio" in l_lower or "envío" in l_lower:
                 envio = re.sub(r'(?i)env[ií]o:?', '', l).strip()
+                lineas_descarte.append(l)
             elif "observaci" in l_lower or "ref:" in l_lower:
                 observacion = l
+                lineas_descarte.append(l)
             elif "kg" in l_lower or "bulto" in l_lower:
                 peso_bulto = l
-            elif "/" in l and len(l) <= 10:
+                lineas_descarte.append(l)
+            elif re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', l):
                 fecha = l
+                lineas_descarte.append(l)
             elif "+" in l or l.startswith("11") or l.startswith("15"):
                 if not telefono:
                     telefono = l
+                    lineas_descarte.append(l)
 
-        # Extracción por bloques vectoriales (mantiene Nombre + Apellido juntos)
-        bloques = pagina.get_text("blocks")
-        
-        # Localidad (Arriba a la izquierda)
-        for b in bloques:
-            if b[0] < r_pag.width * 0.35 and b[1] < r_pag.height * 0.30:
-                txt = b[4].strip()
-                if txt and not any(k in txt.lower() for k in ["http", "www", "kg"]):
-                    localidad = txt.upper()
+        # Captura de Localidad (Suele ser la primera línea en mayúsculas sin números)
+        for l in lineas:
+            if l not in lineas_descarte and not re.search(r'\d', l):
+                if any(zone in l.lower() for zone in ["esteban", "echeverria", "solano", "quilmes", "lanus", "avellaneda", "san isidro", "caba", "zona"]):
+                    localidad = l.upper()
+                    lineas_descarte.append(l)
                     break
 
-        # Bloque central para Destinatario y Dirección
-        bloques_centro = [b for b in bloques if r_pag.width * 0.20 <= b[0] <= r_pag.width * 0.70]
-        textos_centro = []
-        for b in bloques_centro:
-            lines_b = [l.strip() for l in b[4].split("\n") if l.strip()]
-            for l in lines_b:
-                if any(k in l.lower() for k in ["kg", "+54", "observaci", "cp:", "venta:", "rte:"]) or l.upper() == localidad:
-                    continue
-                textos_centro.append(l)
+        if not localidad:
+            for l in lineas:
+                if l not in lineas_descarte and l.isupper() and len(l) > 3 and not re.search(r'\d', l):
+                    localidad = l
+                    lineas_descarte.append(l)
+                    break
 
-        if len(textos_centro) > 0:
-            destinatario = textos_centro[0].upper()
-        if len(textos_centro) > 1:
-            direccion = " ".join(textos_centro[1:])
+        # Captura de Destinatario y Dirección entre las líneas restantes
+        lineas_restantes = [l for l in lineas if l not in lineas_descarte and l.lower() not in ["destinatario", "remitente"]]
 
-        # --- 3. DISEÑAR ETIQUETA EN 10x15 (ESTRUCURA VELLÓN) ---
+        if len(lineas_restantes) > 0:
+            destinatario = lineas_restantes[0].upper()
+        if len(lineas_restantes) > 1:
+            direccion = " ".join(lineas_restantes[1:])
+
+        # -------------------------------------------------------------
+        # 3. CONSTRUCCIÓN DE LA NUEVA ETIQUETA 10x15
+        # -------------------------------------------------------------
         nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
         m = 10  # Margen externo
 
-        # A. QR Grande a la Izquierda
-        tam_qr = 135
+        # A. QR e Imagen del Logo (Tamaños similares en el encabezado)
+        tam_encabezado = 115
+
+        # QR Arriba a la Izquierda
         if qr_pix:
-            rect_qr = fitz.Rect(m, m, m + tam_qr, m + tam_qr)
+            rect_qr = fitz.Rect(m, m, m + tam_encabezado, m + tam_encabezado)
             nueva_pag.insert_image(rect_qr, pixmap=qr_pix)
 
-        x_der = m + tam_qr + 10
-        y_der = m + 5
+        x_der = m + tam_encabezado + 10
+        ancho_disponible_der = ANCHO - m - x_der
 
-        # B. Logo Grande y Localidad a la Derecha del QR
+        # Logo Arriba a la Derecha (Escalado simétrico con el QR)
+        y_der = m
         if logo_pix:
-            ancho_max_logo = ANCHO - m - x_der
-            alto_max_logo = 45
             aspecto = logo_pix.width / logo_pix.height
-            ancho_logo = min(ancho_max_logo, alto_max_logo * aspecto)
+            ancho_logo = ancho_disponible_der
             alto_logo = ancho_logo / aspecto
             
+            if alto_logo > 55:
+                alto_logo = 55
+                ancho_logo = alto_logo * aspecto
+
             rect_logo = fitz.Rect(x_der, y_der, x_der + ancho_logo, y_der + alto_logo)
             nueva_pag.insert_image(rect_logo, pixmap=logo_pix)
-            y_der += alto_logo + 8
+            y_der += alto_logo + 10
 
+        # Localidad debajo del Logo (a la derecha)
         if localidad:
-            rect_loc = fitz.Rect(x_der, y_der, ANCHO - m, m + tam_qr)
-            nueva_pag.insert_textbox(rect_loc, localidad, fontsize=11.5, fontname="hebo")
+            rect_loc = fitz.Rect(x_der, y_der, ANCHO - m, m + tam_encabezado)
+            nueva_pag.insert_textbox(rect_loc, localidad, fontsize=12, fontname="hebo")
 
-        # Línea divisora bajo el QR
-        y = m + tam_qr + 8
+        # Línea divisora del encabezado
+        y = m + tam_encabezado + 8
         nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
 
-        # C. Bloque Destinatario (Centro)
-        y += 12
+        # B. Bloque Destinatario (Centro)
+        y += 10
         nueva_pag.insert_text(fitz.Point(m, y), "Destinatario", fontsize=8, fontname="helv")
-        y += 18
+        y += 16
 
         if destinatario:
-            nueva_pag.insert_text(fitz.Point(m, y), destinatario, fontsize=11, fontname="hebo")
+            nueva_pag.insert_text(fitz.Point(m, y), destinatario, fontsize=11.5, fontname="hebo")
             y += 15
 
         if telefono:
@@ -154,8 +172,8 @@ if archivo_subido:
         y += 15
         nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
 
-        # D. Bloque Inferior: Datos de Envío, Dirección y Observaciones
-        y += 12
+        # C. Bloque Inferior: Datos de Envío, Dirección y Observaciones
+        y += 10
         if remitente:
             nueva_pag.insert_text(fitz.Point(m, y), f"Rte.: {remitente}", fontsize=8.5, fontname="helv")
             y += 12
