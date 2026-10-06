@@ -6,8 +6,8 @@ import base64
 
 st.set_page_config(page_title="Generador 10x15 Universal", page_icon="🏷️", layout="centered")
 
-st.title("🏷️️ Generador de Etiquetas 10x15")
-st.write("Mapeo geométrico estricto por coordenadas X/Y para consistencia total en cualquier etiqueta.")
+st.title("🏷️ Generador de Etiquetas 10x15")
+st.write("Adaptador dinámico universal para impresoras térmicas.")
 
 archivo_subido = st.file_uploader("Seleccionar archivo PDF", type=["pdf"])
 
@@ -22,124 +22,125 @@ if archivo_subido:
     for pagina in doc_origen:
         r_pag = pagina.rect
 
-        # 1. EXTRAER IMÁGENES (QR Y LOGO)
-        imagenes = []
+        # 1. IDENTIFICACIÓN Y SEPARACIÓN CORRECTA DE QR Y LOGO
+        qr_pix = None
+        logo_pix = None
+
         try:
             for img_info in pagina.get_images():
                 xref = img_info[0]
                 pix = fitz.Pixmap(doc_origen, xref)
                 if pix.alpha:
                     pix = fitz.Pixmap(fitz.csRGB, pix)
-                imagenes.append(pix)
+                
+                # Un QR es casi perfectamente cuadrado (aspecto ~ 1.0)
+                aspecto_img = pix.width / float(pix.height)
+                if 0.85 <= aspecto_img <= 1.15 and not qr_pix:
+                    qr_pix = pix
+                elif not logo_pix:
+                    logo_pix = pix
         except Exception:
             pass
 
-        qr_pix = imagenes[0] if len(imagenes) > 0 else None
-        logo_pix = imagenes[1] if len(imagenes) > 1 else None
-
-        # 2. CAPTURA Y PARSEO DE METADATOS CLAVE
+        # 2. EXTRACCIÓN Y PARSEO DE TEXTO LÍNEA POR LÍNEA
         texto_completo = pagina.get_text("text")
-        lineas = [l.strip() for l in texto_completo.split("\n") if l.strip()]
+        lineas_raw = [l.strip() for l in texto_completo.split("\n") if l.strip()]
 
+        localidad = ""
+        destinatario = ""
+        telefono = ""
+        peso_bulto = ""
+        direccion = ""
+        cp = ""
+        observacion = "Sin información"
         fecha = ""
         remitente = ""
         venta = ""
         envio = ""
-        peso_bulto = ""
-        observacion = ""
-        cp = ""
-        telefono = ""
 
-        for l in lineas:
+        lineas_usadas = set()
+
+        # A. Captura de metadatos mediante Regex
+        for l in lineas_raw:
             l_lower = l.lower()
-            if "cp:" in l_lower or "cp " in l_lower:
+            
+            if ("cp:" in l_lower or "cp " in l_lower) and not cp:
                 m = re.search(r'CP:?\s*(\d+)', l, re.IGNORECASE)
                 cp = f"CP: {m.group(1)}" if m else l
-            elif "rte" in l_lower:
+                lineas_usadas.add(l)
+            elif "rte" in l_lower and not remitente:
                 remitente = re.sub(r'(?i)rte\.?:?', '', l).strip()
-            elif "venta" in l_lower:
+                lineas_usadas.add(l)
+            elif "venta" in l_lower and not venta:
                 venta = re.sub(r'(?i)venta:?', '', l).strip()
-            elif "envio" in l_lower or "envío" in l_lower:
+                lineas_usadas.add(l)
+            elif ("envio" in l_lower or "envío" in l_lower) and not envio:
                 envio = re.sub(r'(?i)env[ií]o:?', '', l).strip()
-            elif "observaci" in l_lower or "ref:" in l_lower:
+                lineas_usadas.add(l)
+            elif ("observaci" in l_lower or "ref:" in l_lower) and observacion == "Sin información":
                 observacion = l
-            elif "kg" in l_lower or "bulto" in l_lower:
+                lineas_usadas.add(l)
+            elif ("kg" in l_lower or "bulto" in l_lower) and not peso_bulto:
                 peso_bulto = l.upper()
-            elif re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', l):
-                if not fecha: fecha = l
-            elif ("+" in l or l.startswith("11") or l.startswith("15")) and len(re.sub(r'\D', '', l)) >= 8:
-                if not telefono: telefono = l
+                lineas_usadas.add(l)
+            elif re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', l) and not fecha:
+                fecha = re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', l).group(0)
+                lineas_usadas.add(l)
+            elif ("+" in l or l.startswith("11") or l.startswith("15")) and len(re.sub(r'\D', '', l)) >= 8 and not telefono:
+                telefono = l
+                lineas_usadas.add(l)
 
-        # 3. EXTRAER LOCALIDAD, DESTINATARIO Y DIRECCIÓN POR GEOMETRÍA (PALABRAS Y COORDENADAS)
-        words = pagina.get_text("words")  # (x0, y0, x1, y1, word, block_no, line_no, word_no)
-        
-        words_loc = []
-        words_dest = []
-        words_dir = []
+        # B. Captura de Localidad (Evita marcas corporativas)
+        palabras_ignorar = [
+            "goxp", "logística", "logistica", "jyj", "j&j", 
+            "destinatario", "remitente", "campos extra", "total a cobrar"
+        ]
 
-        # Coordenadas relativas de la etiqueta apaisada original
-        # W_orig, H_orig
-        w_orig = r_pag.width
-        h_orig = r_pag.height
-
-        for w in words:
-            txt = w[4].strip()
-            x0, y0 = w[0], w[1]
-
-            # Ignorar palabras fijas de sistema o encabezados que ensucian
-            if txt.upper() in ["GOXP", "LOGÍSTICA", "LOGISTICA", "JYJ", "J&J", "DESTINATARIO", "REMITENTE"]:
+        for l in lineas_raw:
+            if l in lineas_usadas or any(ign in l.lower() for ign in palabras_ignorar):
                 continue
-            if any(k in txt.lower() for k in ["rte:", "venta:", "envio:", "observaci", "total"]):
-                continue
+            # Buscar localidad conocida o patrones en mayúsculas sin números
+            l_clean = l.strip().upper()
+            if any(z in l_clean for z in ["ESTEBAN ECHEVERRIA", "ECHEVERRIA", "MORON", "MORÓN", "SOLANO", "QUILMES", "LANUS", "AVELLANEDA", "SAN ISIDRO", "CABA", "PALERMO", "MORENO", "MERLO", "SAN MARTIN", "TIGRE"]):
+                localidad = l_clean
+                lineas_usadas.add(l)
+                break
 
-            # A. ZONA LOCALIDAD: Arriba Izquierda (X < 32% del ancho original, Y < 30% del alto)
-            if x0 < w_orig * 0.32 and y0 < h_orig * 0.30:
-                if not re.search(r'\d', txt) and "/" not in txt:
-                    words_loc.append(w)
+        if not localidad:
+            for l in lineas_raw:
+                if l not in lineas_usadas and not re.search(r'\d', l) and len(l) >= 3:
+                    if not any(ign in l.lower() for ign in palabras_ignorar):
+                        localidad = l.upper()
+                        lineas_usadas.add(l)
+                        break
 
-            # B. ZONA DESTINATARIO: Centro Superior (32% < X < 68% del ancho, Y < 35% del alto)
-            elif w_orig * 0.28 <= x0 <= w_orig * 0.68 and y0 < h_orig * 0.38:
-                if not re.search(r'\d', txt) and "/" not in txt and "+" not in txt:
-                    words_dest.append(w)
+        # C. Captura Limpia de Destinatario y Dirección entre lo que sobra
+        lineas_restantes = [
+            l for l in lineas_raw 
+            if l not in lineas_usadas and not any(ign in l.lower() for ign in palabras_ignorar)
+        ]
 
-            # C. ZONA DIRECCIÓN: Centro Medio/Inferior
-            elif w_orig * 0.25 <= x0 <= w_orig * 0.70 and y0 >= h_orig * 0.38:
-                if "cp:" not in txt.lower() and "+" not in txt and "11" not in txt:
-                    words_dir.append(w)
+        if len(lineas_restantes) > 0:
+            destinatario = lineas_restantes[0].upper()
+            lineas_usadas.add(lineas_restantes[0])
 
-        # Ordenar palabras por coordenada Y (renglón) y X (secuencia)
-        def armar_texto(lista_words):
-            if not lista_words: return ""
-            # Agrupar por renglón aproximado Y
-            filas = {}
-            for w in lista_words:
-                y_key = round(w[1] / 6) * 6
-                filas.setdefault(y_key, []).append(w)
-            
-            lineas_res = []
-            for y_k in sorted(filas.keys()):
-                palabras_f = sorted(filas[y_k], key=lambda x: x[0])
-                lineas_res.append(" ".join([w[4] for w in palabras_f]))
-            return " ".join(lineas_res).strip()
+        direccion_partes = []
+        for l in lineas_restantes[1:]:
+            if l not in lineas_usadas:
+                # Evitar que se cuelen fragmentos duplicados de Rte o Venta
+                if not any(k in l.lower() for k in ["rte:", "venta:", "envio:", "fecha:"]):
+                    direccion_partes.append(l)
 
-        localidad = armar_texto(words_loc).upper()
-        destinatario = armar_texto(words_dest).upper()
-        direccion = armar_texto(words_dir)
+        direccion = " ".join(direccion_partes).strip()
 
-        # Respaldo si alguna coordenada se solapó
-        if not destinatario and len(words_loc) > 0:
-            # Si se confundió localidad con destinatario
-            destinatario = localidad
-            localidad = ""
-
-        # 4. CONSTRUCCIÓN DE LA HOJA 10x15
+        # 3. DISEÑO DE LA HOJA 10x15 CM
         nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
         m = 10
         y_cursor = m
 
-        # ENCABEZADO: LOGO + BULTO
+        # ENCABEZADO: LOGO (IZQ) Y BULTO (DER)
         if logo_pix:
-            aspecto = logo_pix.width / logo_pix.height
+            aspecto = logo_pix.width / float(logo_pix.height)
             alto_logo = 32
             ancho_logo = alto_logo * aspecto
             rect_logo = fitz.Rect(m, y_cursor, m + ancho_logo, y_cursor + alto_logo)
@@ -150,7 +151,7 @@ if archivo_subido:
 
         y_cursor += 38
 
-        # FRANJA DE LOCALIDAD
+        # FRANJA NEGRA DE LOCALIDAD
         if localidad:
             alto_franja = 28
             rect_franja = fitz.Rect(m, y_cursor, ANCHO - m, y_cursor + alto_franja)
@@ -165,7 +166,7 @@ if archivo_subido:
             )
             y_cursor += alto_franja + 12
 
-        # QR Y SEGUIMIENTO
+        # CÓDIGO QR GRANDE + DATOS DE SEGUIMIENTO
         tam_qr = 120
         if qr_pix:
             rect_qr = fitz.Rect(m, y_cursor, m + tam_qr, y_cursor + tam_qr)
@@ -195,7 +196,7 @@ if archivo_subido:
         y_cursor += tam_qr + 10
         nueva_pag.draw_line(fitz.Point(m, y_cursor), fitz.Point(ANCHO - m, y_cursor), color=(0, 0, 0), width=1)
 
-        # DESTINATARIO Y DIRECCIÓN
+        # BLOQUE DESTINATARIO Y DIRECCIÓN
         y_cursor += 12
         nueva_pag.insert_text(fitz.Point(m, y_cursor), "Destinatario", fontsize=8, fontname="helv")
         y_cursor += 16
@@ -209,7 +210,7 @@ if archivo_subido:
             y_cursor += 16
 
         if direccion:
-            texto_dir = f"{direccion} {cp}".strip()
+            texto_dir = f"{direccion} {cp}".strip() if cp and cp not in direccion else direccion
             rect_dir = fitz.Rect(m, y_cursor, ANCHO - m, y_cursor + 32)
             nueva_pag.insert_textbox(rect_dir, texto_dir, fontsize=10, fontname="hebo")
             y_cursor += 34
