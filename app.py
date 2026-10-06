@@ -196,46 +196,52 @@ if archivo_subido:
 
     st.success("¡Etiqueta lista!")
 
-    # Columnas para los dos botones
-    col1, col2 = st.columns(2)
+    # Botones HTML alineados simétricamente
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    nombre_archivo = f"10x15_{archivo_subido.name}"
 
-    with col1:
-        st.download_button(
-            label="📥 Descargar PDF 10x15",
-            data=pdf_bytes,
-            file_name=f"10x15_{archivo_subido.name}",
-            mime="application/pdf",
-            type="primary",
-            use_container_width=True
-        )
+    html_botones = f"""
+    <div style="display: flex; gap: 15px; width: 100%; margin-top: 5px;">
+        <a href="data:application/pdf;base64,{base64_pdf}" download="{nombre_archivo}" style="
+            flex: 1;
+            background-color: #ff4b4b;
+            color: white;
+            padding: 12px;
+            font-size: 15px;
+            border-radius: 8px;
+            text-align: center;
+            text-decoration: none;
+            font-weight: bold;
+            box-sizing: border-box;
+            display: inline-block;
+            font-family: sans-serif;
+        ">📥 Descargar PDF 10x15</a>
 
-    with col2:
-        # Codificar el PDF en base64 para inyectarlo en el frame de impresión directa
-        base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-        html_impresion = f"""
-            <a href="data:application/pdf;base64,{base64_pdf}" id="print_link" style="display:none;"></a>
-            <button onclick="imprimirPDF()" style="
-                width: 100%;
-                background-color: #28a745;
-                color: white;
-                padding: 0.5rem 1rem;
-                font-size: 1rem;
-                border: none;
-                border-radius: 8px;
-                cursor: pointer;
-                font-weight: bold;
-                height: 45px;
-            ">🖨️ Imprimir en Térmica</button>
-            <script>
-            function imprimirPDF() {{
-                var pdfData = "data:application/pdf;base64,{base64_pdf}";
-                var iframe = document.createElement('iframe');
-                iframe.style.display = "none";
-                iframe.src = pdfData;
-                document.body.appendChild(iframe);
-                iframe.contentWindow.focus();
-                iframe.contentWindow.print();
-            }}
-            </script>
-        """
-        st.components.v1.html(html_impresion, height=55)
+        <button onclick="imprimirPDF()" style="
+            flex: 1;
+            background-color: #28a745;
+            color: white;
+            padding: 12px;
+            font-size: 15px;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            box-sizing: border-box;
+            font-family: sans-serif;
+        ">🖨️ Imprimir en Térmica</button>
+    </div>
+
+    <script>
+    function imprimirPDF() {{
+        var pdfData = "data:application/pdf;base64,{base64_pdf}";
+        var iframe = document.createElement('iframe');
+        iframe.style.display = "none";
+        iframe.src = pdfData;
+        document.body.appendChild(iframe);
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+    }}
+    </script>
+    """
+    st.components.v1.html(html_botones, height=65)
