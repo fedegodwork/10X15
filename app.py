@@ -2,171 +2,217 @@ import streamlit as st
 import fitz  # PyMuPDF
 import io
 import re
+from reportlab.lib.pagesizes import mm
+from reportlab.pdfgen import canvas
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
-st.set_page_config(page_title="Generador 10x15 Pro", page_icon="🏷️", layout="centered")
+st.set_page_config(page_title="Generador 10x15 Profesional", page_icon="🏷️", layout="centered")
 
 st.title("🏷️ Generador de Etiquetas 10x15")
-st.write("Procesa la etiqueta sin perder información y recrea el formato 10x15 cm.")
+st.write("Rediseño dinámico de precisión basado en la etiqueta modelo.")
 
 archivo_subido = st.file_uploader("Seleccionar archivo PDF", type=["pdf"])
 
-if archivo_subido:
-    # Dimensiones 10x15 cm en puntos (100x150 mm)
-    ANCHO = 100 * 2.83465  # 283.465 pt
-    ALTO = 150 * 2.83465   # 425.197 pt
+def procesar_etiqueta(pdf_bytes):
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pagina = doc[0]
+    
+    # --- 1. EXTRAER IMÁGENES (QR Y LOGO) ---
+    imagenes = []
+    for img_info in pagina.get_images():
+        xref = img_info[0]
+        pix = fitz.Pixmap(doc, xref)
+        if pix.alpha:
+            pix = fitz.Pixmap(fitz.csRGB, pix)
+        imagenes.append(pix.tobytes("png"))
+    
+    qr_png = imagenes[0] if len(imagenes) > 0 else None
+    logo_png = imagenes[1] if len(imagenes) > 1 else None
 
-    bytes_pdf = archivo_subido.read()
-    doc_origen = fitz.open(stream=bytes_pdf, filetype="pdf")
-    doc_destino = fitz.open()
+    # --- 2. EXTRAER PALABRAS CON COORDENADAS ---
+    palabras = pagina.get_text("words") # (x0, y0, x1, y1, word, block_no, line_no, word_no)
+    
+    localidad = ""
+    destinatario = ""
+    telefono = ""
+    peso = ""
+    direccion = ""
+    cp = ""
+    observacion = "Sin información"
+    fecha = ""
+    remitente = ""
+    venta = ""
+    envio = ""
 
-    for pagina in doc_origen:
-        # 1. Extraer imágenes físicas (QR y Logo)
-        imagenes = []
-        try:
-            for img_info in pagina.get_images():
-                xref = img_info[0]
-                pix = fitz.Pixmap(doc_origen, xref)
-                if pix.alpha:
-                    pix = fitz.Pixmap(fitz.csRGB, pix)
-                imagenes.append(pix)
-        except Exception:
-            pass
+    texto_completo = pagina.get_text("text")
+    lineas = [l.strip() for l in texto_completo.split("\n") if l.strip()]
 
-        qr_pix = imagenes[0] if len(imagenes) > 0 else None
-        logo_pix = imagenes[1] if len(imagenes) > 1 else None
+    # Parseo preciso por regex y contexto
+    for i, l in enumerate(lineas):
+        l_lower = l.lower()
+        if "cp:" in l_lower or "cp " in l_lower:
+            m = re.search(r'CP:?\s*(\d+)', l, re.IGNORECASE)
+            if m: cp = f"CP: {m.group(1)}"
+        if "rte" in l_lower:
+            remitente = re.sub(r'(?i)rte\.?:?', '', l).strip()
+        elif "venta" in l_lower:
+            venta = re.sub(r'(?i)venta:?', '', l).strip()
+        elif "envio" in l_lower or "envío" in l_lower:
+            envio = re.sub(r'(?i)env[ií]o:?', '', l).strip()
+        elif "observaci" in l_lower:
+            observacion = l
+        elif "kg" in l_lower:
+            peso = l
+        elif re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', l):
+            fecha = l
+        elif "+" in l or l.startswith("11") or l.startswith("15"):
+            telefono = l
 
-        # 2. Leer todas las líneas de texto
-        texto_pag = pagina.get_text("text")
-        lineas = [l.strip() for l in texto_pag.split("\n") if l.strip()]
+    # Extraer Localidad (Top-Left)
+    words_top_left = [w[4] for w in palabras if w[0] < pagina.rect.width * 0.3 and w[1] < pagina.rect.height * 0.25]
+    if words_top_left:
+        localidad = " ".join(words_top_left).upper()
 
-        localidad = ""
-        destinatario = ""
-        telefono = ""
-        peso_bulto = ""
-        direccion = ""
-        cp = ""
-        observacion = ""
-        fecha = ""
-        remitente = ""
-        venta = ""
-        envio = ""
+    # Extraer Destinatario y Dirección buscando la columna central
+    words_center = [w for w in palabras if pagina.rect.width * 0.25 <= w[0] <= pagina.rect.width * 0.65]
+    
+    # Agrupar por líneas según coordenada Y
+    lineas_center = {}
+    for w in words_center:
+        y_approx = round(w[1] / 8) * 8
+        lineas_center.setdefault(y_approx, []).append(w)
 
-        lineas_no_clasificadas = []
+    lineas_ordenadas = [
+        " ".join([w[4] for w in sorted(lineas_center[k], key=lambda x: x[0])])
+        for k in sorted(lineas_center.keys())
+    ]
 
-        # Clasificación por patrones
-        for l in lineas:
-            l_lower = l.lower()
-            if "cp:" in l_lower or "cp " in l_lower:
-                cp = l
-            elif "rte" in l_lower:
-                remitente = re.sub(r'(?i)rte\.?:?', '', l).strip()
-            elif "venta" in l_lower:
-                venta = re.sub(r'(?i)venta:?', '', l).strip()
-            elif "envio" in l_lower or "envío" in l_lower:
-                envio = re.sub(r'(?i)env[ií]o:?', '', l).strip()
-            elif "observaci" in l_lower or "ref:" in l_lower:
-                observacion = l
-            elif "kg" in l_lower or "bulto" in l_lower:
-                peso_bulto = l
-            elif re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', l):
-                fecha = l
-            elif "+" in l or l.startswith("11") or l.startswith("15") or "phone" in l_lower:
-                if not telefono:
-                    telefono = l
-            elif l_lower in ["destinatario", "remitente"]:
-                continue
-            else:
-                lineas_no_clasificadas.append(l)
+    # Filtrar líneas descartando teléfono, peso, localidad
+    filtradas = []
+    for l in lineas_ordenadas:
+        if any(x in l.lower() for x in ["kg", "+54", "observaci", "cp:"]) or l.upper() == localidad:
+            continue
+        filtradas.append(l)
 
-        # Asignación inteligente de remanentes para no perder destinatario ni localidad
-        if len(lineas_no_clasificadas) > 0:
-            destinatario = lineas_no_clasificadas[0].upper()
-        if len(lineas_no_clasificadas) > 1:
-            localidad = lineas_no_clasificadas[1].upper()
-        if len(lineas_no_clasificadas) > 2:
-            direccion = " ".join(lineas_no_clasificadas[2:])
+    if len(filtradas) > 0:
+        destinatario = filtradas[0].upper()
+    if len(filtradas) > 1:
+        direccion = " ".join(filtradas[1:])
 
-        # 3. Diseñar nueva página 10x15 (Estructura Modelo Vellón)
-        nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
-        m = 10  # Margen externo
-
-        # A. QR Grande Arriba a la Izquierda
-        tam_qr = 130
-        if qr_pix:
-            rect_qr = fitz.Rect(m, m, m + tam_qr, m + tam_qr)
-            nueva_pag.insert_image(rect_qr, pixmap=qr_pix)
-
-        x_der = m + tam_qr + 10
-        y_der = m + 5
-
-        # B. Logo y Localidad a la Derecha del QR
-        if logo_pix:
-            rect_logo = fitz.Rect(x_der, y_der, ANCHO - m, y_der + 30)
-            nueva_pag.insert_image(rect_logo, pixmap=logo_pix)
-            y_der += 35
-
-        if localidad:
-            rect_loc = fitz.Rect(x_der, y_der, ANCHO - m, m + tam_qr)
-            nueva_pag.insert_textbox(rect_loc, localidad, fontsize=12, fontname="hebo")
-
-        # Línea divisora
-        y = m + tam_qr + 10
-        nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
-
-        # C. Bloque Destinatario (Centro)
-        y += 12
-        nueva_pag.insert_text(fitz.Point(m, y), "Destinatario", fontsize=8, fontname="helv")
-        y += 16
-
-        if destinatario:
-            nueva_pag.insert_text(fitz.Point(m, y), destinatario, fontsize=11, fontname="hebo")
-            y += 14
-
-        if telefono:
-            nueva_pag.insert_text(fitz.Point(m, y), telefono, fontsize=8.5, fontname="helv")
-
-        # Fecha y Bulto alineados a la derecha
-        if fecha:
-            nueva_pag.insert_text(fitz.Point(ANCHO - m - 60, y - 14), fecha, fontsize=8.5, fontname="helv")
-        if peso_bulto:
-            nueva_pag.insert_text(fitz.Point(ANCHO - m - 60, y), peso_bulto, fontsize=8.5, fontname="hebo")
-
-        y += 14
-        nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
-
-        # D. Bloque Inferior: Datos de Envío y Dirección
-        y += 12
-        if remitente:
-            nueva_pag.insert_text(fitz.Point(m, y), f"Rte.: {remitente}", fontsize=8, fontname="helv")
-            y += 11
-        if venta:
-            nueva_pag.insert_text(fitz.Point(m, y), f"Venta: {venta}", fontsize=8, fontname="helv")
-            y += 11
-        if envio:
-            nueva_pag.insert_text(fitz.Point(m, y), f"Envio: {envio}", fontsize=8, fontname="helv")
-            y += 13
-
-        if direccion:
-            texto_dir = f"{direccion} {cp}".strip()
-            rect_dir = fitz.Rect(m, y, ANCHO - m, y + 25)
-            nueva_pag.insert_textbox(rect_dir, texto_dir, fontsize=9, fontname="hebo")
-            y += 28
-
-        if observacion:
-            rect_obs = fitz.Rect(m, y, ANCHO - m, ALTO - m)
-            nueva_pag.insert_textbox(rect_obs, observacion, fontsize=8, fontname="helv")
-
-    output_buffer = io.BytesIO()
-    doc_destino.save(output_buffer)
-    doc_destino.close()
-    doc_origen.close()
-
-    st.success("¡Etiqueta reestructurada correctamente a 10x15 cm!")
-
-    st.download_button(
-        label="📥 Descargar PDF 10x15",
-        data=output_buffer.getvalue(),
-        file_name=f"10x15_{archivo_subido.name}",
-        mime="application/pdf",
-        type="primary"
+    # --- 3. CONSTRUIR PDF EN 10x15 CM CON REPORTLAB ---
+    buffer = io.BytesIO()
+    
+    # Ancho: 100mm, Alto: 150mm
+    doc_rl = SimpleDocTemplate(
+        buffer,
+        pagesize=(100 * mm, 150 * mm),
+        rightMargin=4 * mm,
+        leftMargin=4 * mm,
+        topMargin=4 * mm,
+        bottomMargin=4 * mm
     )
+
+    styles = getSampleStyleSheet()
+    
+    style_localidad = ParagraphStyle('Loc', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=16, alignment=1)
+    style_dest_title = ParagraphStyle('DestT', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, textColor=colors.HexColor("#444444"))
+    style_dest_name = ParagraphStyle('DestN', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=12, leading=14)
+    style_info = ParagraphStyle('Info', parent=styles['Normal'], fontName='Helvetica', fontSize=9, leading=11)
+    style_dir = ParagraphStyle('Dir', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, leading=12)
+    style_obs = ParagraphStyle('Obs', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10)
+
+    story = []
+
+    # --- HEADER: QR a la Izquierda | Logo y Localidad a la Derecha ---
+    from reportlab.platypus import Image as RLImage
+    
+    img_qr = RLImage(io.BytesIO(qr_png), width=42*mm, height=42*mm) if qr_png else Paragraph("", style_info)
+    
+    header_right = []
+    if logo_png:
+        header_right.append(RLImage(io.BytesIO(logo_png), width=40*mm, height=16*mm))
+        header_right.append(Spacer(1, 2*mm))
+    if localidad:
+        header_right.append(Paragraph(f"<b>{localidad}</b>", style_localidad))
+
+    t_header = Table([[img_qr, header_right]], colWidths=[44*mm, 48*mm])
+    t_header.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+        ('TOPPADDING', (0,0), (-1,-1), 0),
+    ]))
+    story.append(t_header)
+    story.append(Spacer(1, 3*mm))
+
+    # --- BLOQUE DESTINATARIO ---
+    story.append(Paragraph("Destinatario", style_dest_title))
+    story.append(Spacer(1, 1*mm))
+    if destinatario:
+        story.append(Paragraph(destinatario, style_dest_name))
+        story.append(Spacer(1, 1*mm))
+
+    # Tabla Teléfono | Fecha + Peso
+    txt_tel = telefono if telefono else ""
+    txt_der = f"{fecha} &nbsp;&nbsp;&nbsp;&nbsp; <b>{peso}</b>" if fecha or peso else ""
+    
+    t_mid = Table([[Paragraph(txt_tel, style_info), Paragraph(txt_der, style_info)]], colWidths=[46*mm, 46*mm])
+    t_mid.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('ALIGN', (1,0), (1,0), 'RIGHT'),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+    ]))
+    story.append(t_mid)
+    story.append(Spacer(1, 3*mm))
+
+    # --- SECCIÓN DIRECCIÓN Y SEGUIMIENTO ---
+    datos_envio = []
+    if remitente: datos_envio.append(f"Rte.: {remitente}")
+    if venta: datos_envio.append(f"Venta: {venta}")
+    if envio: datos_envio.append(f"Envio: {envio}")
+    
+    str_envio = "<br/>".join(datos_envio)
+    
+    t_envio = Table([[Paragraph(str_envio, style_info)]], colWidths=[92*mm])
+    t_envio.setStyle(TableStyle([
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('TOPPADDING', (0,0), (-1,-1), 0),
+    ]))
+    story.append(t_envio)
+    story.append(Spacer(1, 3*mm))
+
+    if direccion:
+        txt_completo_dir = f"{direccion} {cp}".strip()
+        story.append(Paragraph(txt_completo_dir, style_dir))
+        story.append(Spacer(1, 3*mm))
+
+    if observacion:
+        story.append(Paragraph(f"<b>Observación:</b> {observacion}", style_obs))
+
+    # Borde exterior
+    def draw_background(canvas, doc):
+        canvas.saveState()
+        canvas.setLineWidth(1)
+        canvas.setStrokeColor(colors.black)
+        canvas.rect(3*mm, 3*mm, 94*mm, 144*mm)
+        canvas.restoreState()
+
+    doc_rl.build(story, onFirstPage=draw_background)
+    return buffer.getvalue()
+
+if archivo_subido:
+    try:
+        pdf_res = procesar_etiqueta(archivo_subido.read())
+        st.success("¡Etiqueta adaptada con precisión al formato 10x15 cm!")
+        st.download_button(
+            label="📥 Descargar PDF 10x15",
+            data=pdf_res,
+            file_name=f"10x15_{archivo_subido.name}",
+            mime="application/pdf",
+            type="primary"
+        )
+    except Exception as e:
+        st.error(f"Error procesando la etiqueta: {e}")
