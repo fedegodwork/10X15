@@ -4,10 +4,10 @@ import io
 import re
 import base64
 
-st.set_page_config(page_title="Generador 10x15 Universal", page_icon="🏷️️", layout="centered")
+st.set_page_config(page_title="Generador 10x15 Universal", page_icon="🏷️", layout="centered")
 
-st.title("🏷️ Generador de Etiquetas 10x15")
-st.write("Mapeo dinámico por coordenadas para máxima consistencia entre diferentes formatos de etiqueta.")
+st.title("🏷️️ Generador de Etiquetas 10x15")
+st.write("Mapeo geométrico estricto por coordenadas X/Y para consistencia total en cualquier etiqueta.")
 
 archivo_subido = st.file_uploader("Seleccionar archivo PDF", type=["pdf"])
 
@@ -37,28 +37,24 @@ if archivo_subido:
         qr_pix = imagenes[0] if len(imagenes) > 0 else None
         logo_pix = imagenes[1] if len(imagenes) > 1 else None
 
-        # 2. PARSEO DE DATOS
+        # 2. CAPTURA Y PARSEO DE METADATOS CLAVE
         texto_completo = pagina.get_text("text")
         lineas = [l.strip() for l in texto_completo.split("\n") if l.strip()]
 
-        localidad = ""
-        destinatario = ""
-        telefono = ""
-        peso_bulto = ""
-        direccion = ""
-        cp = ""
-        observacion = ""
         fecha = ""
         remitente = ""
         venta = ""
         envio = ""
+        peso_bulto = ""
+        observacion = ""
+        cp = ""
+        telefono = ""
 
-        # Mapeo de metadatos mediante patrones
         for l in lineas:
             l_lower = l.lower()
             if "cp:" in l_lower or "cp " in l_lower:
-                cp_match = re.search(r'CP:?\s*(\d+)', l, re.IGNORECASE)
-                cp = f"CP: {cp_match.group(1)}" if cp_match else l
+                m = re.search(r'CP:?\s*(\d+)', l, re.IGNORECASE)
+                cp = f"CP: {m.group(1)}" if m else l
             elif "rte" in l_lower:
                 remitente = re.sub(r'(?i)rte\.?:?', '', l).strip()
             elif "venta" in l_lower:
@@ -66,69 +62,82 @@ if archivo_subido:
             elif "envio" in l_lower or "envío" in l_lower:
                 envio = re.sub(r'(?i)env[ií]o:?', '', l).strip()
             elif "observaci" in l_lower or "ref:" in l_lower:
-                if not observacion or observacion.lower() == "sin información":
-                    observacion = l
+                observacion = l
             elif "kg" in l_lower or "bulto" in l_lower:
                 peso_bulto = l.upper()
             elif re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', l):
-                if not fecha:
-                    fecha = l
+                if not fecha: fecha = l
             elif ("+" in l or l.startswith("11") or l.startswith("15")) and len(re.sub(r'\D', '', l)) >= 8:
-                if not telefono:
-                    telefono = l
+                if not telefono: telefono = l
 
-        # Búsqueda directa de Localidad por patrones y palabras clave de zonas
-        palabras_ignorar = ["goxp", "logística", "logistica", "jyj", "j&j", "destinatario", "remitente", "campos extra", "total a cobrar", "sin información"]
+        # 3. EXTRAER LOCALIDAD, DESTINATARIO Y DIRECCIÓN POR GEOMETRÍA (PALABRAS Y COORDENADAS)
+        words = pagina.get_text("words")  # (x0, y0, x1, y1, word, block_no, line_no, word_no)
+        
+        words_loc = []
+        words_dest = []
+        words_dir = []
 
-        for l in lineas:
-            l_clean = l.strip().upper()
-            if any(ign in l.lower() for ign in palabras_ignorar):
+        # Coordenadas relativas de la etiqueta apaisada original
+        # W_orig, H_orig
+        w_orig = r_pag.width
+        h_orig = r_pag.height
+
+        for w in words:
+            txt = w[4].strip()
+            x0, y0 = w[0], w[1]
+
+            # Ignorar palabras fijas de sistema o encabezados que ensucian
+            if txt.upper() in ["GOXP", "LOGÍSTICA", "LOGISTICA", "JYJ", "J&J", "DESTINATARIO", "REMITENTE"]:
                 continue
-            # Detectar si coincide con una localidad/zona
-            if any(z in l_clean for z in ["MORON", "MORÓN", "SOLANO", "ESTEBAN ECHEVERRIA", "ECHEVERRIA", "QUILMES", "LANUS", "LANÚS", "AVELLANEDA", "SAN ISIDRO", "CABA", "PALERMO", "MORENO", "MERLO", "SAN MARTIN", "FLORIDA", "TIGRE", "ZONA"]):
-                localidad = l_clean
-                break
-
-        # Respaldos de Localidad si no matcheó en el diccionario
-        if not localidad:
-            for l in lineas:
-                l_clean = l.strip().upper()
-                if l_clean not in palabras_ignorar and len(l_clean) >= 3 and not re.search(r'\d', l_clean):
-                    if l_clean != destinatario:
-                        localidad = l_clean
-                        break
-
-        # Búsqueda de Destinatario (Primera línea con texto que no sea metadato ni localidad)
-        for l in lineas:
-            l_clean = l.strip()
-            if any(ign in l.lower() for ign in palabras_ignorar) or l_clean.upper() == localidad:
+            if any(k in txt.lower() for k in ["rte:", "venta:", "envio:", "observaci", "total"]):
                 continue
-            if re.search(r'\d', l_clean) or "/" in l_clean or "CP:" in l_clean:
-                continue
-            destinatario = l_clean.upper()
-            break
 
-        # Dirección
-        for l in lineas:
-            l_lower = l.lower()
-            if any(k in l_lower for k in ["calle", "av", "boulevard", "cobo", "pasaje", "piso", "n°", "cp:"]):
-                if "rte:" not in l_lower and "venta:" not in l_lower:
-                    direccion = l
-                    break
+            # A. ZONA LOCALIDAD: Arriba Izquierda (X < 32% del ancho original, Y < 30% del alto)
+            if x0 < w_orig * 0.32 and y0 < h_orig * 0.30:
+                if not re.search(r'\d', txt) and "/" not in txt:
+                    words_loc.append(w)
 
-        if not direccion:
-            lineas_restantes = [l for l in lineas if l.upper() not in [destinatario, localidad] and not any(ign in l.lower() for ign in palabras_ignorar)]
-            for l in lineas_restantes:
-                if re.search(r'\d', l) and "/" not in l and "+" not in l:
-                    direccion = l
-                    break
+            # B. ZONA DESTINATARIO: Centro Superior (32% < X < 68% del ancho, Y < 35% del alto)
+            elif w_orig * 0.28 <= x0 <= w_orig * 0.68 and y0 < h_orig * 0.38:
+                if not re.search(r'\d', txt) and "/" not in txt and "+" not in txt:
+                    words_dest.append(w)
 
-        # 3. CONSTRUCCIÓN DE LA ETIQUETA 10x15
+            # C. ZONA DIRECCIÓN: Centro Medio/Inferior
+            elif w_orig * 0.25 <= x0 <= w_orig * 0.70 and y0 >= h_orig * 0.38:
+                if "cp:" not in txt.lower() and "+" not in txt and "11" not in txt:
+                    words_dir.append(w)
+
+        # Ordenar palabras por coordenada Y (renglón) y X (secuencia)
+        def armar_texto(lista_words):
+            if not lista_words: return ""
+            # Agrupar por renglón aproximado Y
+            filas = {}
+            for w in lista_words:
+                y_key = round(w[1] / 6) * 6
+                filas.setdefault(y_key, []).append(w)
+            
+            lineas_res = []
+            for y_k in sorted(filas.keys()):
+                palabras_f = sorted(filas[y_k], key=lambda x: x[0])
+                lineas_res.append(" ".join([w[4] for w in palabras_f]))
+            return " ".join(lineas_res).strip()
+
+        localidad = armar_texto(words_loc).upper()
+        destinatario = armar_texto(words_dest).upper()
+        direccion = armar_texto(words_dir)
+
+        # Respaldo si alguna coordenada se solapó
+        if not destinatario and len(words_loc) > 0:
+            # Si se confundió localidad con destinatario
+            destinatario = localidad
+            localidad = ""
+
+        # 4. CONSTRUCCIÓN DE LA HOJA 10x15
         nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
         m = 10
         y_cursor = m
 
-        # ENCABEZADO
+        # ENCABEZADO: LOGO + BULTO
         if logo_pix:
             aspecto = logo_pix.width / logo_pix.height
             alto_logo = 32
@@ -200,7 +209,7 @@ if archivo_subido:
             y_cursor += 16
 
         if direccion:
-            texto_dir = f"{direccion} {cp}".strip() if cp not in direccion else direccion
+            texto_dir = f"{direccion} {cp}".strip()
             rect_dir = fitz.Rect(m, y_cursor, ANCHO - m, y_cursor + 32)
             nueva_pag.insert_textbox(rect_dir, texto_dir, fontsize=10, fontname="hebo")
             y_cursor += 34
@@ -215,7 +224,7 @@ if archivo_subido:
     doc_destino.close()
     doc_origen.close()
 
-    st.success("¡Etiqueta lista!")
+    st.success("¡Etiqueta procesada con éxito!")
 
     base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
     nombre_archivo = f"10x15_{archivo_subido.name}"
