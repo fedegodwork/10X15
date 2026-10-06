@@ -1,83 +1,91 @@
 import streamlit as st
 import fitz  # PyMuPDF
 import io
-import re
 
-st.set_page_config(page_title="Convertidor a 10x15", page_icon="🏷️", layout="centered")
+st.set_page_config(page_title="Convertidor Universal 10x15", page_icon="🏷️", layout="centered")
 
-st.title("🏷️ Convertidor de Etiquetas a 10x15")
-st.write("Extrae la información del PDF apaisado y genera una etiqueta limpia adaptada a 10x15 cm.")
+st.title("🏷️ Convertidor de Etiquetas a 10x15 (Universal)")
+st.write("Sube cualquier PDF de etiqueta apaisada para transformarlo automáticamente al formato vertical 10x15 cm.")
 
 archivo_subido = st.file_uploader("Seleccionar archivo PDF", type=["pdf"])
 
 if archivo_subido:
-    # Dimensiones 10x15 cm en puntos (100x150 mm)
-    ANCHO = 100 * 2.83465  # 283.465 pt
-    ALTO = 150 * 2.83465   # 425.197 pt
+    # Dimensiones exactas de hoja 10x15 cm (100x150 mm en puntos)
+    ANCHO_DESTINO = 100 * 2.83465  # 283.465 pt
+    ALTO_DESTINO = 150 * 2.83465   # 425.197 pt
 
     bytes_pdf = archivo_subido.read()
     doc_origen = fitz.open(stream=bytes_pdf, filetype="pdf")
     doc_destino = fitz.open()
 
     for pagina in doc_origen:
-        # 1. Extraer texto completo de la página original
-        texto_pag = pagina.get_text("text")
-        lineas = [l.strip() for l in texto_pag.split("\n") if l.strip()]
+        rect_pag = pagina.rect
         
-        # 2. Extraer la imagen del QR original
-        qr_pixmap = None
-        for img in pagina.get_images():
-            xref = img[0]
-            base_image = doc_origen.extract_image(xref)
-            qr_pixmap = fitz.Pixmap(doc_origen, xref)
-            if qr_pixmap.alpha:
-                qr_pixmap = fitz.Pixmap(fitz.csRGB, qr_pixmap)
-            break  # Tomamos la primera imagen (QR)
-
-        # 3. Crear nueva página 10x15 cm
-        nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
-        
-        # Dibuja borde de la etiqueta
-        m = 8  # Margen externo
-        nueva_pag.draw_rect(fitz.Rect(m, m, ANCHO - m, ALTO - m), color=(0, 0, 0), width=1)
-
-        # A. DIBUJAR EL QR ARRIBA (Centrado y grande)
-        if qr_pixmap:
-            # Cuadrado para el QR en la parte superior
-            tamano_qr = 150
-            x_qr = (ANCHO - tamano_qr) / 2
-            rect_qr = fitz.Rect(x_qr, m + 10, x_qr + tamano_qr, m + 10 + tamano_qr)
-            nueva_pag.insert_image(rect_qr, pixmap=qr_pixmap)
+        # Detectar el recuadro que contiene elementos visibles (para ignorar bordes blancos vacíos)
+        bloques = pagina.get_text("blocks")
+        rect_contenido = None
+        for b in bloques:
+            r = fitz.Rect(b[:4])
+            rect_contenido = r if rect_contenido is None else (rect_contenido | r)
             
-        # Línea divisora bajo el QR
-        y_cursor = m + 170
-        nueva_pag.draw_line(fitz.Point(m, y_cursor), fitz.Point(ANCHO - m, y_cursor), color=(0, 0, 0), width=1)
+        for img in pagina.get_images():
+            try:
+                for img_rect in pagina.get_image_rects(img[0]):
+                    rect_contenido = img_rect if rect_contenido is None else (rect_contenido | img_rect)
+            except Exception:
+                pass
 
-        # B. DIBUJAR LA INFORMACIÓN EXTRAÍDA
-        # Si la información se extrajo, la organizamos en secciones
-        y_cursor += 15
+        if rect_contenido is None or rect_contenido.is_empty:
+            rect_contenido = rect_pag
+
+        # Margen de seguridad externo (3 mm)
+        m = 3 * 2.83465
         
-        # Insertar todo el texto de manera ordenada
-        rect_texto = fitz.Rect(m + 10, y_cursor, ANCHO - m - 10, ALTO - m - 10)
+        # Crear nueva página 10x15 cm
+        nueva_pag = doc_destino.new_page(width=ANCHO_DESTINO, height=ALTO_DESTINO)
+
+        # -------------------------------------------------------------
+        # 1. BLOQUE QR (Toma el tercio izquierdo de la etiqueta original)
+        # -------------------------------------------------------------
+        corte_x = rect_contenido.x0 + (rect_contenido.width * 0.32)
         
-        # Formateamos el texto extraído
-        texto_formateado = "\n".join(lineas)
-        
-        nueva_pag.insert_textbox(
-            rect_texto, 
-            texto_formateado, 
-            fontsize=9, 
-            fontname="helv", 
-            align=0
+        rect_qr_orig = fitz.Rect(
+            rect_contenido.x0, 
+            rect_contenido.y0, 
+            corte_x, 
+            rect_contenido.y1
         )
+        
+        # Destino: Mitad superior de la hoja 10x15
+        alto_qr_dest = ALTO_DESTINO * 0.44
+        rect_qr_dest = fitz.Rect(m, m, ANCHO_DESTINO - m, m + alto_qr_dest)
+        
+        # Insertar sección del QR escalada al máximo arriba
+        nueva_pag.show_pdf_page(rect_qr_dest, doc_origen, pagina.number, clip=rect_qr_orig)
 
-    # Guardar PDF resultante
+        # -------------------------------------------------------------
+        # 2. BLOQUE DATOS Y LOGO (Toma los dos tercios derechos)
+        # -------------------------------------------------------------
+        rect_datos_orig = fitz.Rect(
+            corte_x, 
+            rect_contenido.y0, 
+            rect_contenido.x1, 
+            rect_contenido.y1
+        )
+        
+        # Destino: Mitad inferior de la hoja 10x15
+        rect_datos_dest = fitz.Rect(m, m + alto_qr_dest + 8, ANCHO_DESTINO - m, ALTO_DESTINO - m)
+        
+        # Insertar sección de Datos y Logo escalada en la parte inferior
+        nueva_pag.show_pdf_page(rect_datos_dest, doc_origen, pagina.number, clip=rect_datos_orig)
+
+    # Guardar archivo en memoria
     output_buffer = io.BytesIO()
     doc_destino.save(output_buffer)
     doc_destino.close()
     doc_origen.close()
 
-    st.success("¡Etiqueta rediseñada a 10x15 cm con éxito!")
+    st.success("¡Etiqueta convertida exitosamente a 10x15 cm!")
 
     st.download_button(
         label="📥 Descargar PDF 10x15",
