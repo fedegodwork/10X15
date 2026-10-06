@@ -6,13 +6,13 @@ import re
 st.set_page_config(page_title="Generador 10x15 Pro", page_icon="🏷️", layout="centered")
 
 st.title("🏷️ Generador de Etiquetas 10x15")
-st.write("Lee dinámicamente tu etiqueta y recrea el formato exacto en 10x15 cm.")
+st.write("Genera la maqueta con la disposición exacta de zonas y bloques.")
 
 archivo_subido = st.file_uploader("Seleccionar archivo PDF", type=["pdf"])
 
 if archivo_subido:
-    ANCHO = 100 * 2.83465  # 283.465 pt (100 mm)
-    ALTO = 150 * 2.83465   # 425.197 pt (150 mm)
+    ANCHO = 100 * 2.83465  # 100 mm en puntos (283.465 pt)
+    ALTO = 150 * 2.83465   # 150 mm en puntos (425.197 pt)
 
     bytes_pdf = archivo_subido.read()
     doc_origen = fitz.open(stream=bytes_pdf, filetype="pdf")
@@ -71,7 +71,7 @@ if archivo_subido:
                 observacion = l
                 lineas_conocidas.append(l)
             elif "kg" in l_lower or "bulto" in l_lower:
-                peso_bulto = l
+                peso_bulto = l.upper()
                 lineas_conocidas.append(l)
             elif "/" in l and len(l) <= 10:
                 fecha = l
@@ -100,99 +100,96 @@ if archivo_subido:
         if len(lineas_entrega) > 1:
             direccion = " ".join(lineas_entrega[1:])
 
-        # 3. CONSTRUCCIÓN DE LA HOJA 10x15
+        # 3. DISEÑAR ETIQUETA 10x15 (DISEÑO EXACTO FOTO 2)
         nueva_pag = doc_destino.new_page(width=ANCHO, height=ALTO)
-        m = 10  # Margen
+        m = 10  # Margen externo
+        y_cursor = m
 
-        # A. ENCABEZADO: QR (Izquierda)
-        tam_qr = 115
-        if qr_pix:
-            rect_qr = fitz.Rect(m, m, m + tam_qr, m + tam_qr)
-            nueva_pag.insert_image(rect_qr, pixmap=qr_pix)
-
-        x_der = m + tam_qr + 8
-        ancho_der = ANCHO - m - x_der
-
-        # LOGO ALINEADO ARRIBA A LA DERECHA
-        y_der = m
+        # --- SECCIÓN 1: ENCABEZADO (LOGO A LA IZQ | BULTO A LA DER) ---
         if logo_pix:
             aspecto = logo_pix.width / logo_pix.height
-            ancho_l = ancho_der * 0.85
-            alto_l = ancho_l / aspecto
-            if alto_l > 38:
-                alto_l = 38
-                ancho_l = alto_l * aspecto
-            
-            # Posición pegada a la derecha arriba
-            x_logo = ANCHO - m - ancho_l
-            rect_logo = fitz.Rect(x_logo, y_der, ANCHO - m, y_der + alto_l)
+            alto_logo = 32
+            ancho_logo = alto_logo * aspecto
+            rect_logo = fitz.Rect(m, y_cursor, m + ancho_logo, y_cursor + alto_logo)
             nueva_pag.insert_image(rect_logo, pixmap=logo_pix)
-            y_der += alto_l + 6
 
-        # LOCALIDAD EN RECUADRO NEGRO CON LETRAS BLANCAS (ESTILO VELLÓN)
+        if peso_bulto:
+            txt_bulto = peso_bulto if "BULTO" in peso_bulto else f"BULTO {peso_bulto}"
+            nueva_pag.insert_text(fitz.Point(ANCHO - m - 90, y_cursor + 20), txt_bulto, fontsize=11, fontname="hebo")
+
+        y_cursor += 38
+
+        # --- SECCIÓN 2: FRANJA DE LOCALIDAD (ANCHO COMPLETO, FONDO NEGRO) ---
         if localidad:
-            alto_caja = 34
-            rect_caja = fitz.Rect(x_der, m + tam_qr - alto_caja, ANCHO - m, m + tam_qr)
+            alto_franja = 28
+            rect_franja = fitz.Rect(m, y_cursor, ANCHO - m, y_cursor + alto_franja)
             
-            # Dibuja fondo negro sólido
-            nueva_pag.draw_rect(rect_caja, color=(0, 0, 0), fill=(0, 0, 0))
+            # Dibujar rectángulo negro con esquinas levemente redondeadas
+            nueva_pag.draw_rect(rect_franja, color=(0, 0, 0), fill=(0, 0, 0), radius=3)
             
-            # Texto blanco centrado en negrita
+            # Texto centrado blanco grande
             nueva_pag.insert_textbox(
-                rect_caja, 
+                rect_franja, 
                 localidad, 
-                fontsize=11.5, 
+                fontsize=13, 
                 fontname="hebo", 
                 color=(1, 1, 1), 
                 align=1
             )
+            y_cursor += alto_franja + 12
 
-        # Línea divisora 1
-        y = m + tam_qr + 8
-        nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
+        # --- SECCIÓN 3: QR (IZQUIERDA) + DATOS DE SEGUIMIENTO (DERECHA) ---
+        tam_qr = 120
+        if qr_pix:
+            rect_qr = fitz.Rect(m, y_cursor, m + tam_qr, y_cursor + tam_qr)
+            nueva_pag.insert_image(rect_qr, pixmap=qr_pix)
 
-        # B. BLOQUE DESTINATARIO
-        y += 10
-        nueva_pag.insert_text(fitz.Point(m, y), "Destinatario", fontsize=8, fontname="helv")
-        y += 16
-
-        if destinatario:
-            nueva_pag.insert_text(fitz.Point(m, y), destinatario, fontsize=12, fontname="hebo")
-            y += 15
-
-        if telefono:
-            nueva_pag.insert_text(fitz.Point(m, y), telefono, fontsize=9, fontname="helv")
+        x_datos = m + tam_qr + 12
+        y_datos = y_cursor + 5
 
         if fecha:
-            nueva_pag.insert_text(fitz.Point(ANCHO - m - 65, y - 15), fecha, fontsize=8.5, fontname="helv")
-        if peso_bulto:
-            nueva_pag.insert_text(fitz.Point(ANCHO - m - 65, y), peso_bulto, fontsize=8.5, fontname="hebo")
+            nueva_pag.insert_text(fitz.Point(x_datos, y_datos), f"Fecha: {fecha}", fontsize=9, fontname="hebo")
+            y_datos += 18
+            nueva_pag.draw_line(fitz.Point(x_datos, y_datos - 6), fitz.Point(ANCHO - m, y_datos - 6), color=(0.8, 0.8, 0.8), width=0.5)
 
-        # Línea divisora 2
-        y += 15
-        nueva_pag.draw_line(fitz.Point(m, y), fitz.Point(ANCHO - m, y), color=(0, 0, 0), width=1)
-
-        # C. BLOQUE INFERIOR
-        y += 10
         if remitente:
-            nueva_pag.insert_text(fitz.Point(m, y), f"Rte.: {remitente}", fontsize=8.5, fontname="helv")
-            y += 12
+            nueva_pag.insert_text(fitz.Point(x_datos, y_datos), f"Rte.: {remitente}", fontsize=8.5, fontname="helv")
+            y_datos += 18
+            nueva_pag.draw_line(fitz.Point(x_datos, y_datos - 6), fitz.Point(ANCHO - m, y_datos - 6), color=(0.8, 0.8, 0.8), width=0.5)
+
         if venta:
-            nueva_pag.insert_text(fitz.Point(m, y), f"Venta: {venta}", fontsize=8.5, fontname="helv")
-            y += 12
+            nueva_pag.insert_text(fitz.Point(x_datos, y_datos), f"Venta: {venta}", fontsize=8.5, fontname="hebo")
+            y_datos += 18
+            nueva_pag.draw_line(fitz.Point(x_datos, y_datos - 6), fitz.Point(ANCHO - m, y_datos - 6), color=(0.8, 0.8, 0.8), width=0.5)
+
         if envio:
-            nueva_pag.insert_text(fitz.Point(m, y), f"Envio: {envio}", fontsize=8.5, fontname="helv")
-            y += 14
+            nueva_pag.insert_text(fitz.Point(x_datos, y_datos), f"Envio: {envio}", fontsize=8.5, fontname="hebo")
+
+        y_cursor += tam_qr + 10
+        nueva_pag.draw_line(fitz.Point(m, y_cursor), fitz.Point(ANCHO - m, y_cursor), color=(0, 0, 0), width=1)
+
+        # --- SECCIÓN 4: DESTINATARIO Y DIRECCIÓN DE ENTREGA ---
+        y_cursor += 12
+        nueva_pag.insert_text(fitz.Point(m, y_cursor), "Destinatario", fontsize=8, fontname="helv")
+        y_cursor += 16
+
+        if destinatario:
+            nueva_pag.insert_text(fitz.Point(m, y_cursor), destinatario, fontsize=12, fontname="hebo")
+            y_cursor += 15
+
+        if telefono:
+            nueva_pag.insert_text(fitz.Point(m, y_cursor), telefono, fontsize=9.5, fontname="helv")
+            y_cursor += 16
 
         if direccion:
             texto_dir = f"{direccion} {cp}".strip()
-            rect_dir = fitz.Rect(m, y, ANCHO - m, y + 32)
+            rect_dir = fitz.Rect(m, y_cursor, ANCHO - m, y_cursor + 32)
             nueva_pag.insert_textbox(rect_dir, texto_dir, fontsize=10, fontname="hebo")
-            y += 34
+            y_cursor += 34
 
         if observacion:
-            rect_obs = fitz.Rect(m, y, ANCHO - m, ALTO - m)
-            nueva_pag.insert_textbox(rect_obs, observacion, fontsize=8, fontname="helv")
+            rect_obs = fitz.Rect(m, y_cursor, ANCHO - m, ALTO - m)
+            nueva_pag.insert_textbox(rect_obs, observacion, fontsize=8.5, fontname="helv")
 
     output_buffer = io.BytesIO()
     doc_destino.save(output_buffer)
